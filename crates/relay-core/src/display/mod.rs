@@ -5,6 +5,7 @@
 //! only implementation is [`ddc`], which writes DDC/CI itself, but tests swap
 //! in their own.
 
+pub mod capabilities;
 pub mod ddc;
 pub(crate) mod ioav_ffi;
 

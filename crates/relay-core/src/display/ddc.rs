@@ -35,13 +35,13 @@ const DDC_CHIP_ADDRESS_DEFAULT: u32 = 0x37;
 /// MCDP29xx bridges route DDC through 0xB7 instead.
 const DDC_CHIP_ADDRESS_MCDP29XX: u32 = 0xB7;
 /// The I2C data address DDC/CI writes go to.
-const DDC_DATA_ADDRESS: u32 = 0x51;
+pub(crate) const DDC_DATA_ADDRESS: u32 = 0x51;
 /// VCP feature code "Input Source".
-const VCP_INPUT_SOURCE: u8 = 0x60;
+pub(crate) const VCP_INPUT_SOURCE: u8 = 0x60;
 /// Displays drop writes often enough that `m1ddc` sends every packet twice;
 /// these are its `DDC_ITERATIONS` and `DDC_WAIT`.
 const DDC_ITERATIONS: usize = 2;
-const DDC_WAIT: Duration = Duration::from_millis(10);
+pub(crate) const DDC_WAIT: Duration = Duration::from_millis(10);
 /// MCDP29xx bridges need longer than [`DDC_WAIT`] before the reply can be
 /// fetched — 10 ms comes back empty on those — so `m1ddc` waits 50 ms there
 /// (`DDC_MCDP_READ_WAIT` in its `sources/i2c.m`). This is the *pre-read* wait
@@ -64,7 +64,7 @@ const DDC_READ_ATTEMPTS: usize = 2;
 const DDC_READ_RETRY_WAIT: Duration = Duration::from_millis(400);
 /// A DDC write that takes longer than this means the display is not answering
 /// (the budget the M0 shell-out used).
-const TOOL_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const TOOL_TIMEOUT: Duration = Duration::from_secs(8);
 /// What a framebuffer with no `ProductName` is called.
 const UNKNOWN_DISPLAY: &str = "Unknown Display";
 
@@ -321,7 +321,7 @@ fn perform_read(transport: &impl DdcTransport, chip: u32, wait: Duration) -> Opt
 /// How long to wait after the request before fetching the reply.
 ///
 /// `Duration::ZERO` stays zero: the tests use it to mean "do not sleep".
-fn read_wait(chip: u32, wait: Duration) -> Duration {
+pub(crate) fn read_wait(chip: u32, wait: Duration) -> Duration {
     if wait.is_zero() || chip != DDC_CHIP_ADDRESS_MCDP29XX {
         wait
     } else {
@@ -337,7 +337,7 @@ pub(crate) trait DdcTransport {
 }
 
 /// Sends `packet` [`DDC_ITERATIONS`] times, pausing `wait` before each write.
-fn perform_write(
+pub(crate) fn perform_write(
     transport: &impl DdcTransport,
     chip: u32,
     packet: &[u8],
@@ -473,13 +473,13 @@ pub(crate) struct Proxy {
 }
 
 /// An open `IOAVService`, released when the write is done.
-struct IoAvTransport {
+pub(crate) struct IoAvTransport {
     service: CFRetained<CFType>,
-    chip_address: u32,
+    pub(crate) chip_address: u32,
 }
 
 impl IoAvTransport {
-    fn open(proxy: &Proxy) -> Result<Self, DisplayError> {
+    pub(crate) fn open(proxy: &Proxy) -> Result<Self, DisplayError> {
         // SAFETY: `proxy.entry` owns a live `DCPAVServiceProxy` handle.
         let service =
             unsafe { ioav_ffi::create_with_service(proxy.entry.raw()) }.ok_or_else(|| {
@@ -512,7 +512,7 @@ impl DdcTransport for IoAvTransport {
 }
 
 /// Walks the IOService plane and returns every display we can drive.
-fn scan_displays() -> Vec<PairedDisplay<Proxy>> {
+pub(crate) fn scan_displays() -> Vec<PairedDisplay<Proxy>> {
     pair_displays(walk_registry())
 }
 
