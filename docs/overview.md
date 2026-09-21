@@ -70,7 +70,7 @@ relay/
     runtime.rs        事件循环、单定时器、切换串行化、配置仅在 Idle 时替换、CoreHandle
     trigger/          mod.rs（PresenceTracker：多 HID 节点折叠为一次 Left/Arrived）· presence.rs（IOHIDManager 回调 FFI、list_hid_devices）
     device/           mod.rs（HostSwitchable trait）· logitech.rs（LogitechHidpp）· discovery.rs（scan_switchable_devices）· replay_support.rs（test only）
-    display/          mod.rs（DisplayInput trait）· ioav_ffi.rs（三个 IOKit 私有符号：create / write / read）· ddc.rs（IORegistry 发现 + DDC 写入，DdcTransport 测试缝）▸ capabilities.rs（M4）
+    display/          mod.rs（DisplayInput trait）· ioav_ffi.rs（三个 IOKit 私有符号：create / write / read）· ddc.rs（IORegistry 发现 + DDC 写入，DdcTransport 测试缝）capabilities.rs（能力串 0xF3 → 它支持哪几个输入源 + MCCS 名字表）
     permissions.rs    IOHIDCheckAccess / IOHIDRequestAccess
     log.rs            tracing → 按天文件 + 200 条环形缓冲供 UI
     examples/          hid_watch.rs（观察插拔事件）· scan.rs（扫描可切换设备；需输入监控，勿在 agent shell 里跑）· ddc.rs（`list` / `set <edid_uuid|first> <code>`；无需权限，但写前先确认用户在本机）
@@ -91,5 +91,6 @@ relay/
 
 - 能切：支持 HID++ `ChangeHost` 的罗技设备（BLE 直连 / Bolt / Unifying）；支持 DDC 写 VCP 0x60 的外接显示器。
 - 能读：显示器肯回答 VCP 0x60 读时，能读回它当前显示的输入源，用来判断画面在不在本机（设置页也用它回填输入源）。读不回来不是错误，按"不知道"走兜底规则。
+- 也能读：显示器肯回答 VCP 0xF3 能力串时，能读回它**支持哪几个输入源**，设置页据此列出下拉选项（名字来自 MCCS 标准表）。读不回来同样不是错误，那一格退回手填编号。
 - 不能：非罗技设备；Intel Mac；内置屏；0x60 只写或睡眠中的显示器读不出当前输入源。
 - 权限：打开键鼠 HID 需「输入监控」（TCC，绑定 bundle id + 签名 Team）；DDC 与枚举不需要。
