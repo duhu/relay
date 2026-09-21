@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use relay_core::config::Config;
+use relay_core::config::{Config, SCHEMA_VERSION};
 use relay_core::device::discovery::{self, DiscoveredDevice};
 use relay_core::display::capabilities::{self, InputSource};
 use relay_core::display::ddc::{self, DdcDisplay, DiscoveredDisplay};
@@ -58,6 +58,52 @@ fn save_config_to(path: &Path, cfg: &Config) -> Result<(), String> {
     // and drop to `Unconfigured`.
     cfg.validate().map_err(|err| err.to_string())?;
     cfg.save_atomic(path).map_err(|err| err.to_string())
+}
+
+/// Reads a config file the user picked, without touching this machine's own.
+///
+/// The wizard shows the machine list out of it before asking which one this
+/// Mac is, so the answer has to be available before anything is written.
+#[tauri::command]
+pub fn read_config_file(path: String) -> Result<Config, String> {
+    Config::load(Path::new(&path)).map_err(|err| err.to_string())
+}
+
+/// Adopts the config at `path` as this machine's and writes it.
+///
+/// The file's own `this_host` and `leave_to` are ignored — they belong to the
+/// machine that exported it. Nothing is written unless the adopted config
+/// validates, so a bad file leaves the existing one exactly as it was.
+#[tauri::command]
+pub fn import_config(
+    path: String,
+    this_host: HostIndex,
+    leave_to: Option<HostIndex>,
+) -> Result<Config, String> {
+    let mut cfg = Config::load(Path::new(&path)).map_err(|err| err.to_string())?;
+    // A file from a newer Relay may parse and still mean something else; there
+    // is no migration, so say so rather than half-import it.
+    if cfg.schema_version != SCHEMA_VERSION {
+        return Err(format!(
+            "this file is schema version {}, and this Relay reads version {SCHEMA_VERSION}",
+            cfg.schema_version
+        ));
+    }
+    cfg.adopt(this_host, leave_to)
+        .map_err(|err| err.to_string())?;
+    save_config_to(&paths::config_path(), &cfg)?;
+    Ok(cfg)
+}
+
+/// Copies the live config file to `path`.
+///
+/// The file, not the window's copy of it: what is exported has to be the
+/// config that is actually running, so an unsaved edit must not travel.
+#[tauri::command]
+pub fn export_config(path: String) -> Result<(), String> {
+    std::fs::copy(paths::config_path(), Path::new(&path))
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]

@@ -3,7 +3,10 @@
 // timing and which host this machine is. Saving hands the file to the backend,
 // which validates it before writing; the core picks the new file up through its
 // watcher.
+import { desktopDir, join } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+// `save` is this view's own save button, so the panel comes in renamed.
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { computed, nextTick, onMounted, onUnmounted, ref, watchEffect } from "vue";
 
 import { setLanguage, t } from "../lib/i18n";
@@ -524,6 +527,29 @@ async function openPrivacySettings() {
     await ipc.openPrivacySettings();
   } catch (err) {
     await showBanner(t("error.openSettings", { detail: String(err) }));
+  }
+}
+
+/**
+ * Writes the config file this Mac is running to a file the user picks, for the
+ * next Mac to read. The backend copies the file itself, so what travels is what
+ * is running rather than whatever this window currently holds.
+ *
+ * Closing the panel without choosing a path is an answer, not a failure: it
+ * returns `null` and nothing happens.
+ */
+async function exportConfig() {
+  banner.value = "";
+  try {
+    const path = await saveDialog({
+      defaultPath: await join(await desktopDir(), "relay-config.json"),
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (path === null) return;
+    await ipc.exportConfig(path);
+    showToast(t("toast.exported"));
+  } catch (err) {
+    await showBanner(t("error.export", { detail: String(err) }));
   }
 }
 
@@ -1611,6 +1637,16 @@ async function switchTo(host: Host) {
               </select>
             </span>
           </label>
+        </section>
+
+        <section class="card">
+          <h2>{{ t("transfer.title") }}</h2>
+          <div class="row">
+            <span class="muted">{{ t("transfer.hint") }}</span>
+            <span class="v">
+              <button class="mini" @click="exportConfig">{{ t("transfer.export") }}</button>
+            </span>
+          </div>
         </section>
       </template>
     </main>

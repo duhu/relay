@@ -50,6 +50,9 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // The settings window's export uses the native save panel to pick a
+        // path; only the panel lives in the frontend, the copy stays in Rust.
+        .plugin(tauri_plugin_dialog::init())
         // Registered here rather than on each window, so that every window is
         // covered from birth: `windows::open` also runs off the main thread.
         .on_window_event(windows::hide_on_close)
@@ -67,6 +70,9 @@ pub fn run() {
             commands::input_monitoring_granted,
             commands::request_input_monitoring,
             commands::open_privacy_settings,
+            commands::read_config_file,
+            commands::import_config,
+            commands::export_config,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]

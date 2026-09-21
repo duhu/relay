@@ -145,6 +145,29 @@ export function saveConfig(cfg: Config): Promise<void> {
   return invoke<void>("save_config", { cfg });
 }
 
+/** Reads a config file without touching this machine's own. */
+export function readConfigFile(path: string): Promise<Config> {
+  return invoke<Config>("read_config_file", { path });
+}
+
+/**
+ * Adopts the config at `path` as this machine's. The file's own `this_host`
+ * and `leave_to` are ignored: they describe the machine that exported it.
+ * `leaveTo` may be null only when the file declares exactly two hosts.
+ */
+export function importConfig(
+  path: string,
+  thisHost: number,
+  leaveTo: number | null,
+): Promise<Config> {
+  return invoke<Config>("import_config", { path, thisHost, leaveTo });
+}
+
+/** Copies the live config file — not the window's copy — to `path`. */
+export function exportConfig(path: string): Promise<void> {
+  return invoke<void>("export_config", { path });
+}
+
 export function getStatus(): Promise<Status> {
   return invoke<Status>("get_status");
 }

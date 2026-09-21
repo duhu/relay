@@ -14,6 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{DeviceId, DeviceRole, HostIndex};
 
+/// The shape of the config file this build reads and writes. A file carrying
+/// any other number was written by a Relay that means something else by these
+/// field names, and there is no migration.
+pub const SCHEMA_VERSION: u32 = 1;
+
 /// The shortest cooldown between two switches. Repeated `ChangeHost` calls in
 /// quick succession have corrupted the Bluetooth connection before (see
 /// `AGENTS.md`), so a near-zero cooldown must not be storable at all.
@@ -246,6 +251,10 @@ pub enum ConfigError {
         "debounce_ms {ms} is too short; at least {MIN_DEBOUNCE_MS} ms is required before a switch"
     )]
     DebounceTooShort { ms: u64 },
+    #[error("host {index} is not one of the declared hosts")]
+    AdoptUnknownHost { index: HostIndex },
+    #[error("with three hosts or more, the host to leave towards has to be chosen")]
+    AdoptLeaveToRequired,
 }
 
 impl ConfigError {
@@ -444,6 +453,50 @@ impl Config {
 
         Ok(())
     }
+
+    /// Turns a config exported from another machine into this machine's.
+    ///
+    /// Only two things differ between the machines sharing one keyboard: which
+    /// host this one is, and where a trigger device goes when it leaves. Every
+    /// other field is shared by construction, so this copies nothing and moves
+    /// nothing — it writes those two and stops.
+    ///
+    /// `leave_to` may be `None` only with exactly two hosts, where the answer
+    /// is the other one. With three the file cannot know, and neither can we.
+    pub fn adopt(
+        &mut self,
+        this_host: HostIndex,
+        leave_to: Option<HostIndex>,
+    ) -> Result<(), ConfigError> {
+        let declared = |index: HostIndex| self.hosts.iter().any(|host| host.index == index);
+        if !declared(this_host) {
+            return Err(ConfigError::AdoptUnknownHost { index: this_host });
+        }
+
+        let exit = match leave_to {
+            Some(index) if !declared(index) => {
+                return Err(ConfigError::AdoptUnknownHost { index });
+            }
+            // Leaving towards the machine you are on is not leaving.
+            Some(index) if index == this_host => return Err(ConfigError::AdoptLeaveToRequired),
+            Some(index) => index,
+            None => {
+                let mut others = self.hosts.iter().filter(|host| host.index != this_host);
+                match (others.next(), others.next()) {
+                    (Some(only), None) => only.index,
+                    _ => return Err(ConfigError::AdoptLeaveToRequired),
+                }
+            }
+        };
+
+        self.this_host = this_host;
+        for device in &mut self.devices {
+            // A follow device is sent wherever the switch is going; it has no
+            // exit of its own, and writing one would be a lie the UI reads back.
+            device.leave_to = device.is_trigger.then_some(exit);
+        }
+        Ok(())
+    }
 }
 
 fn write_all_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -464,7 +517,7 @@ pub(crate) mod test_support {
     /// following mouse.
     pub(crate) fn two_host_config() -> Config {
         Config {
-            schema_version: 1,
+            schema_version: SCHEMA_VERSION,
             this_host: 0,
             hosts: vec![
                 Host {
@@ -536,6 +589,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::{three_host_config, two_host_config};
     use super::*;
 
     /// The example from `docs/specs/relay-core.md` §6 (device ids concretized to
@@ -1014,5 +1068,102 @@ mod tests {
             "unexpected default path: {}",
             path.display()
         );
+    }
+
+    #[test]
+    fn adopting_sets_this_host_and_the_trigger_s_exit() {
+        let mut cfg = three_host_config();
+        cfg.adopt(2, Some(1)).expect("adopt");
+        assert_eq!(cfg.this_host, 2);
+        let trigger = cfg
+            .devices
+            .iter()
+            .find(|d| d.is_trigger)
+            .expect("a trigger");
+        assert_eq!(trigger.leave_to, Some(1));
+    }
+
+    #[test]
+    fn a_follow_device_never_gets_an_exit() {
+        let mut cfg = three_host_config();
+        cfg.adopt(2, Some(1)).expect("adopt");
+        for device in cfg.devices.iter().filter(|d| !d.is_trigger) {
+            assert_eq!(device.leave_to, None);
+        }
+    }
+
+    #[test]
+    fn with_two_hosts_the_exit_is_the_other_one() {
+        let mut cfg = two_host_config(); // hosts 0 and 1
+        cfg.adopt(1, None).expect("adopt");
+        let trigger = cfg
+            .devices
+            .iter()
+            .find(|d| d.is_trigger)
+            .expect("a trigger");
+        assert_eq!(trigger.leave_to, Some(0));
+    }
+
+    #[test]
+    fn with_three_hosts_an_exit_must_be_given() {
+        let mut cfg = three_host_config();
+        assert!(matches!(
+            cfg.adopt(2, None),
+            Err(ConfigError::AdoptLeaveToRequired)
+        ));
+    }
+
+    #[test]
+    fn a_host_that_is_not_declared_cannot_be_adopted() {
+        let mut cfg = three_host_config();
+        assert!(matches!(
+            cfg.adopt(9, Some(1)),
+            Err(ConfigError::AdoptUnknownHost { index: 9 })
+        ));
+    }
+
+    #[test]
+    fn the_exit_must_be_a_declared_host_other_than_this_one() {
+        let mut cfg = three_host_config();
+        assert!(matches!(
+            cfg.adopt(2, Some(2)),
+            Err(ConfigError::AdoptLeaveToRequired)
+        ));
+        assert!(matches!(
+            cfg.adopt(2, Some(9)),
+            Err(ConfigError::AdoptUnknownHost { index: 9 })
+        ));
+    }
+
+    #[test]
+    fn adopting_changes_nothing_else() {
+        let before = three_host_config();
+        let mut after = before.clone();
+        after.adopt(2, Some(1)).expect("adopt");
+        // Everything a machine shares with its peers must survive untouched.
+        assert_eq!(after.hosts, before.hosts);
+        assert_eq!(after.displays, before.displays);
+        assert_eq!(after.timing, before.timing);
+        assert_eq!(after.hotkeys, before.hotkeys);
+        assert_eq!(after.options, before.options);
+        assert_eq!(after.schema_version, before.schema_version);
+        let names: Vec<_> = after
+            .devices
+            .iter()
+            .map(|d| (&d.id, &d.name, d.is_trigger, d.follow))
+            .collect();
+        let was: Vec<_> = before
+            .devices
+            .iter()
+            .map(|d| (&d.id, &d.name, d.is_trigger, d.follow))
+            .collect();
+        assert_eq!(names, was);
+    }
+
+    #[test]
+    fn an_adopted_config_passes_validation() {
+        let mut cfg = three_host_config();
+        cfg.adopt(2, Some(1)).expect("adopt");
+        cfg.validate().expect("an adopted config must be usable");
     }
 }

@@ -169,6 +169,13 @@ const zhHans: Record<string, string> = {
   "options.languageZhHans": "简体中文",
   "options.languageEn": "English",
 
+  // Moving a config between Macs. Every machine's file is the same but for
+  // which host it is and where its trigger leaves to, so the second Mac reads
+  // the first one's file instead of being typed out again.
+  "transfer.title": "配置搬到另一台 Mac",
+  "transfer.hint": "导出的是当前生效的配置，没保存的改动不在里面。",
+  "transfer.export": "导出配置",
+
   // The footer.
   "footer.savedNote": "保存后立即生效",
 
@@ -184,6 +191,7 @@ const zhHans: Record<string, string> = {
   "toast.channelRange": "通道号必须在 1–3 之间",
   "toast.channelTaken": "通道 {channel} 已被「{name}」使用，请先改另一台",
   "toast.readInput": "读到当前输入源 {code}",
+  "toast.exported": "已导出",
 
   // Banners. The detail is whatever the backend said, which is still English
   // (the Rust side's `ConfigError` is not translated yet).
@@ -196,6 +204,7 @@ const zhHans: Record<string, string> = {
   "error.readInput": "读取输入源失败：{detail}",
   "error.scanDevices": "扫描设备失败：{detail}",
   "error.switch": "切换失败：{detail}",
+  "error.export": "导出失败：{detail}",
 
   // The log window.
   "log.title": "Relay 日志",
@@ -336,6 +345,11 @@ const en: Record<string, string> = {
   "options.languageZhHans": "简体中文",
   "options.languageEn": "English",
 
+  "transfer.title": "Move this config to another Mac",
+  "transfer.hint":
+    "What is exported is the config that is running; unsaved edits are not in it.",
+  "transfer.export": "Export the config",
+
   "footer.savedNote": "Changes take effect immediately",
 
   "validate.hostChannel": "The channel of Mac {row} has to be a whole number from 1 to 3.",
@@ -349,6 +363,7 @@ const en: Record<string, string> = {
   "toast.channelRange": "The channel has to be 1, 2 or 3",
   "toast.channelTaken": "Channel {channel} already belongs to “{name}”; change that one first",
   "toast.readInput": "Read input source {code}",
+  "toast.exported": "Exported",
 
   "error.loadConfig": "Cannot read the config file: {detail}",
   "error.save": "Saving failed: {detail}",
@@ -359,6 +374,7 @@ const en: Record<string, string> = {
   "error.readInput": "Reading the input source failed: {detail}",
   "error.scanDevices": "Scanning devices failed: {detail}",
   "error.switch": "The switch failed: {detail}",
+  "error.export": "Exporting failed: {detail}",
 
   "log.title": "Relay Log",
   "log.empty": "No log lines yet.",
