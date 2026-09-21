@@ -469,10 +469,32 @@ mod tests {
 
     #[test]
     fn a_fragment_longer_than_one_can_be_is_refused() {
-        // The length byte claims 40 where the protocol allows at most 35.
-        let reply = vec![0x6E, 0x80 | 40, CAPS_REPLY, 0x00, 0x00, b'x'];
+        // The length byte claims 40 where the protocol allows at most 35. The
+        // check has to be made against the buffer `collect_capabilities` really
+        // hands over: a short slice is turned away by the buffer-length check
+        // instead, which is not the guard under test.
+        let mut reply = [0u8; CAPS_REPLY_LEN];
+        reply[..6].copy_from_slice(&[0x6E, 0x80 | 40, CAPS_REPLY, 0x00, 0x00, b'x']);
         assert_eq!(parse_fragment(&reply), None);
-        let transport = FragmentingTransport::new(vec![reply]);
+
+        // And 35 is a ceiling, not a fence: the longest legal fragment is kept.
+        let mut legal = [0u8; CAPS_REPLY_LEN];
+        legal[..5].copy_from_slice(&[0x6E, 0x80 | 35, CAPS_REPLY, 0x00, 0x00]);
+        legal[5..37].fill(b'a');
+        assert_eq!(
+            parse_fragment(&legal).map(|(at, data)| (at, data.len())),
+            Some((0, 32))
+        );
+
+        let transport = FragmentingTransport::new(vec![reply.to_vec()]);
         assert_eq!(collect_capabilities(&transport, 0x37, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn a_reply_without_the_protocol_s_length_bit_is_refused() {
+        // 35 is a legal length; without the 0x80 the byte is not a length at all.
+        let mut reply = [0u8; CAPS_REPLY_LEN];
+        reply[..6].copy_from_slice(&[0x6E, 35, CAPS_REPLY, 0x00, 0x00, b'x']);
+        assert_eq!(parse_fragment(&reply), None);
     }
 }
