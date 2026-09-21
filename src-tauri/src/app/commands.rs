@@ -361,7 +361,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let live = dir.path().join("config.json");
         let source = dir.path().join("exported.json");
-        save_config_to(&live, &valid_config()).expect("save the live config");
+        // The live config has to differ from what the tests write to `source`,
+        // or "the live file survived" would also hold for an import that wrote
+        // the source's bytes when it should have refused.
+        let mut live_cfg = valid_config();
+        live_cfg.hosts[0].name = "Previously".to_string();
+        save_config_to(&live, &live_cfg).expect("save the live config");
         let before = fs::read(&live).expect("read");
         (dir, live, source, before)
     }
