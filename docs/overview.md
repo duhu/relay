@@ -33,7 +33,7 @@ relay (menu bar, LSUIElement)                 relay CLI（短命）
 ```
 
 **进程职责**：
-- **常驻实例**：持有 Coordinator、触发源、配置监听、tray；设置窗口按需创建、关闭即销毁，所有状态在 core。
+- **常驻实例**：持有 Coordinator、触发源、配置监听、tray；设置窗口按需创建、关闭即隐藏（退出只能从菜单栏），所有状态在 core。
 - **CLI**：解析参数 → 经 IPC 发给常驻实例 → 打印结果 → 退出码 0 成功 / 1 失败 / 2 用法错误 / 3 常驻实例不在。
 - 常驻实例不存在时 CLI 自启它（`detach` 方式，同 AskHuman `daemon/spawn.rs`）。
 

@@ -164,7 +164,12 @@ fn menu(app: &AppHandle, status: &Status) -> tauri::Result<Menu<Wry>> {
 
 fn on_menu_event(app: &AppHandle, core: &CoreHandle, id: &str) {
     match id {
-        MENU_ID_QUIT => app.exit(0),
+        MENU_ID_QUIT => {
+            // The windows hide rather than close, so they have to be told the
+            // app is leaving or they would refuse and keep the process alive.
+            windows::begin_quit();
+            app.exit(0);
+        }
         MENU_ID_SETTINGS => windows::open(app, "settings"),
         MENU_ID_LOG => windows::open(app, "log"),
         // The status line is disabled, so it never fires.

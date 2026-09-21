@@ -15,6 +15,7 @@ const error = ref("");
 const scroller = ref<HTMLElement | null>(null);
 
 let timer = 0;
+let unlisten: Array<() => void> = [];
 
 // The native title bar is outside the Vue tree, so the window title has to be
 // set from here; `t()` reads the language ref, so this re-runs whenever the
@@ -30,11 +31,38 @@ watchEffect(() => {
 });
 
 onMounted(() => {
-  void refresh();
-  timer = window.setInterval(refresh, REFRESH_MS);
+  start();
+  // The close button hides this window instead of destroying it, so the view
+  // outlives being put away and the poll has to be stopped and started by hand:
+  // `windows.rs` sends "hidden" as it hides the window and "shown" when it
+  // comes back. Both are targeted at this window, which is why they are listened
+  // for on it rather than on the app.
+  const self = getCurrentWindow();
+  void self.listen("hidden", () => stop()).then(remember);
+  void self.listen("shown", () => start()).then(remember);
 });
 
-onUnmounted(() => window.clearInterval(timer));
+onUnmounted(() => {
+  stop();
+  for (const off of unlisten) off();
+  unlisten = [];
+});
+
+function remember(off: () => void) {
+  unlisten.push(off);
+}
+
+/** Refreshes now and keeps refreshing; safe to call on an already-running poll. */
+function start() {
+  stop();
+  void refresh();
+  timer = window.setInterval(refresh, REFRESH_MS);
+}
+
+function stop() {
+  window.clearInterval(timer);
+  timer = 0;
+}
 
 async function refresh() {
   const box = scroller.value;

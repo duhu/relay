@@ -110,6 +110,7 @@ const SAVE_REFRESH_MS = [300, 700, 1200, 1600];
 
 let toastTimer = 0;
 let saveTimers: number[] = [];
+let unlistenShown: (() => void) | null = null;
 
 // The native title bar is outside the Vue tree, so the window title has to be
 // set from here; `t()` reads the language ref, so this re-runs whenever the
@@ -124,12 +125,46 @@ watchEffect(() => {
     });
 });
 
-onMounted(() => void load());
+onMounted(() => {
+  void load();
+  // The close button hides this window instead of destroying it, so the view
+  // outlives being put away and `windows.rs` sends "shown" when it comes back.
+  // The listener is registered on this window, which is what the targeted emit
+  // on the Rust side reaches.
+  void getCurrentWindow()
+    .listen("shown", () => void onShown())
+    .then((off) => {
+      unlistenShown = off;
+    });
+});
 
 onUnmounted(() => {
   window.clearTimeout(toastTimer);
   for (const timer of saveTimers) window.clearTimeout(timer);
+  unlistenShown?.();
 });
+
+/**
+ * Re-reads what the world outside this window may have changed while it was
+ * hidden — and only that.
+ *
+ * The config is deliberately *not* re-read: hiding rather than destroying is
+ * what lets a half-finished edit survive being put away, and loading
+ * `config.json` again would throw it out. The input sources are deliberately
+ * not re-read either: a capabilities read costs about a second per display and
+ * a monitor's input list does not change while the window is away, so asking
+ * again stays where it already is, behind the scan button.
+ */
+async function onShown() {
+  await refreshStatus();
+  try {
+    granted.value = await ipc.inputMonitoringGranted();
+  } catch {
+    /* the permission answer stays as it was; `load()` reports the failure */
+  }
+  await refreshHere();
+  await readScreen();
+}
 
 async function load() {
   // A reload replaces the device and display rows, so the scan lists — whose
