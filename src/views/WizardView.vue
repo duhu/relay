@@ -825,7 +825,12 @@ async function next() {
           </span>
           <!-- The way out, on every screen the wizard can be stuck on. The done
                screen has its own, and it is the one that belongs there. -->
-          <button v-if="screen !== 'done'" class="link" @click="emit('exit')">
+          <button
+            v-if="screen !== 'done'"
+            class="link"
+            :disabled="busy"
+            @click="emit('exit')"
+          >
             {{ exitLabel }}
           </button>
         </span>
