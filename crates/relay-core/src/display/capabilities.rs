@@ -238,9 +238,9 @@ pub(crate) fn collect_capabilities(
 /// capabilities request at all. The caller falls back to letting the user type
 /// the code, so this is never an error.
 ///
-/// Slow by this module's standards — the display we have needs about 1.7
-/// seconds — so it belongs on the settings window's timeline, never in a
-/// switch.
+/// Slow by this module's standards — the display we have needs about a second
+/// (338 bytes over 24 round trips) against 60ms for a single VCP read — so it
+/// belongs on the settings window's timeline, never in a switch.
 pub async fn read_input_sources(edid_uuid: Option<String>) -> Vec<InputSource> {
     let read =
         tokio::task::spawn_blocking(move || read_input_sources_blocking(edid_uuid.as_deref()));
