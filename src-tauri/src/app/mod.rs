@@ -60,6 +60,7 @@ pub fn run() {
             commands::scan_devices,
             commands::list_displays,
             commands::read_display_input,
+            commands::list_input_sources,
             commands::input_monitoring_granted,
             commands::request_input_monitoring,
             commands::open_privacy_settings,

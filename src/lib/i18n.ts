@@ -115,6 +115,10 @@ const zhHans: Record<string, string> = {
   "displays.readUnsupported": "这台显示器不回答输入源，请手动填写编号。",
   "displays.readNoMatch": "本机没有 EDID UUID 是「{uuid}」的显示器，请用「扫描显示器」核对这一行。",
   "displays.rowGone": "这一行已经不在了，读到的输入源没有写进去。",
+  "displays.inputCode": "输入源 {code}",
+  "displays.inputCustom": "自定义…",
+  "displays.inputCurrent": "{name} · 当前",
+  "displays.inputEmpty": "未选择",
 
   // The devices table.
   "devices.title": "设备",
@@ -280,6 +284,10 @@ const en: Record<string, string> = {
   "displays.readNoMatch":
     "No display on this Mac has the EDID UUID “{uuid}”; check this row with “Scan displays”.",
   "displays.rowGone": "That row is gone, so the input source that came back was not written.",
+  "displays.inputCode": "Input {code}",
+  "displays.inputCustom": "Custom…",
+  "displays.inputCurrent": "{name} · current",
+  "displays.inputEmpty": "Not set",
 
   "devices.title": "Devices",
   "devices.transport": "Link",

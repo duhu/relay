@@ -10,6 +10,7 @@ use std::path::Path;
 
 use relay_core::config::Config;
 use relay_core::device::discovery::{self, DiscoveredDevice};
+use relay_core::display::capabilities::{self, InputSource};
 use relay_core::display::ddc::{self, DdcDisplay, DiscoveredDisplay};
 use relay_core::display::DisplayInput;
 use relay_core::executor::SwitchReport;
@@ -132,6 +133,20 @@ pub async fn read_display_input(edid_uuid: String) -> Option<u8> {
         edid_uuid.clone()
     };
     DdcDisplay::new(Some(edid_uuid), name).current_input().await
+}
+
+/// Which input sources a display says it has, for the 显示器 row's picker.
+///
+/// Empty when the display will not answer the capabilities request, which is
+/// an answer, not an error: the settings window then shows the plain number
+/// box it always had. `edid_uuid` is empty for "the first external display",
+/// exactly as the config spells it.
+///
+/// Takes about a second, so the window asks once when it opens and again only
+/// when the user rescans.
+#[tauri::command]
+pub async fn list_input_sources(edid_uuid: String) -> Vec<InputSource> {
+    capabilities::read_input_sources(Some(edid_uuid)).await
 }
 
 #[tauri::command]

@@ -127,6 +127,14 @@ export interface DiscoveredDisplay {
   name: string;
 }
 
+/** One input source a display reported through its capabilities string. */
+export interface InputSource {
+  /** The DDC value written to VCP 0x60 to select it. */
+  code: number;
+  /** The MCCS name, or `null` for a code the standard does not name. */
+  name: string | null;
+}
+
 /** Reads the config file; rejects when it is missing or unparseable. */
 export function getConfig(): Promise<Config> {
   return invoke<Config>("get_config");
@@ -178,6 +186,16 @@ export function listDisplays(): Promise<DiscoveredDisplay[]> {
  */
 export function readDisplayInput(edidUuid: string): Promise<number | null> {
   return invoke<number | null>("read_display_input", { edidUuid });
+}
+
+/**
+ * Asks one display which input sources it has. `edidUuid` is empty for the
+ * first external display. Resolves to an empty list when the display will not
+ * say — the caller then lets the user type the code by hand. Takes seconds,
+ * unlike every other display call here.
+ */
+export function listInputSources(edidUuid: string): Promise<InputSource[]> {
+  return invoke<InputSource[]>("list_input_sources", { edidUuid });
 }
 
 export function inputMonitoringGranted(): Promise<boolean> {
