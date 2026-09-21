@@ -255,6 +255,8 @@ pub enum ConfigError {
     AdoptUnknownHost { index: HostIndex },
     #[error("with three hosts or more, the host to leave towards has to be chosen")]
     AdoptLeaveToRequired,
+    #[error("the host to leave towards cannot be this machine")]
+    AdoptLeaveToIsThisHost,
 }
 
 impl ConfigError {
@@ -478,7 +480,7 @@ impl Config {
                 return Err(ConfigError::AdoptUnknownHost { index });
             }
             // Leaving towards the machine you are on is not leaving.
-            Some(index) if index == this_host => return Err(ConfigError::AdoptLeaveToRequired),
+            Some(index) if index == this_host => return Err(ConfigError::AdoptLeaveToIsThisHost),
             Some(index) => index,
             None => {
                 let mut others = self.hosts.iter().filter(|host| host.index != this_host);
@@ -1086,6 +1088,10 @@ mod tests {
     #[test]
     fn a_follow_device_never_gets_an_exit() {
         let mut cfg = three_host_config();
+        // A config exported from another Mac can carry an exit on a follower; it
+        // describes that machine, not this one, so adopting has to clear it.
+        cfg.devices[1].leave_to = Some(0);
+        assert!(!cfg.devices[1].is_trigger, "devices[1] is the follower");
         cfg.adopt(2, Some(1)).expect("adopt");
         for device in cfg.devices.iter().filter(|d| !d.is_trigger) {
             assert_eq!(device.leave_to, None);
@@ -1127,7 +1133,7 @@ mod tests {
         let mut cfg = three_host_config();
         assert!(matches!(
             cfg.adopt(2, Some(2)),
-            Err(ConfigError::AdoptLeaveToRequired)
+            Err(ConfigError::AdoptLeaveToIsThisHost)
         ));
         assert!(matches!(
             cfg.adopt(2, Some(9)),
@@ -1140,24 +1146,13 @@ mod tests {
         let before = three_host_config();
         let mut after = before.clone();
         after.adopt(2, Some(1)).expect("adopt");
-        // Everything a machine shares with its peers must survive untouched.
-        assert_eq!(after.hosts, before.hosts);
-        assert_eq!(after.displays, before.displays);
-        assert_eq!(after.timing, before.timing);
-        assert_eq!(after.hotkeys, before.hotkeys);
-        assert_eq!(after.options, before.options);
-        assert_eq!(after.schema_version, before.schema_version);
-        let names: Vec<_> = after
-            .devices
-            .iter()
-            .map(|d| (&d.id, &d.name, d.is_trigger, d.follow))
-            .collect();
-        let was: Vec<_> = before
-            .devices
-            .iter()
-            .map(|d| (&d.id, &d.name, d.is_trigger, d.follow))
-            .collect();
-        assert_eq!(names, was);
+        // Spell out the only two fields adopting may touch; everything else is
+        // compared by the struct itself, so a field added later cannot slip past.
+        let mut expected = before.clone();
+        expected.this_host = 2;
+        expected.devices[0].leave_to = Some(1);
+        assert!(expected.devices[0].is_trigger, "devices[0] is the trigger");
+        assert_eq!(after, expected);
     }
 
     #[test]

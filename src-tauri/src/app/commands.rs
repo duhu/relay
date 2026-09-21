@@ -6,6 +6,8 @@
 //! and reloads itself (invariant 7 in `docs/overview.md`), so no command ever
 //! pokes the core's state directly.
 
+use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use relay_core::config::{Config, SCHEMA_VERSION};
@@ -27,6 +29,11 @@ use super::paths;
 /// The System Settings pane that holds the Input Monitoring list.
 const PRIVACY_PANE_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
+
+/// What an export onto the live config file is told, in words the user can act
+/// on: the destination has to be some other file.
+const SAME_FILE: &str =
+    "this is the config Relay is using; export it to another folder or under another name";
 
 /// One currently connected HID device, as the settings window's device picker
 /// shows it. `id` is the `vid:pid` form `DeviceId` uses.
@@ -66,7 +73,27 @@ fn save_config_to(path: &Path, cfg: &Config) -> Result<(), String> {
 /// Mac is, so the answer has to be available before anything is written.
 #[tauri::command]
 pub fn read_config_file(path: String) -> Result<Config, String> {
-    Config::load(Path::new(&path)).map_err(|err| err.to_string())
+    let cfg = Config::load(Path::new(&path)).map_err(|err| err.to_string())?;
+    // Gate here as well as on import: a file this Relay cannot read should be
+    // refused before the wizard lists its machines and asks two questions.
+    check_schema(&cfg)?;
+    Ok(cfg)
+}
+
+/// Refuses a config file this Relay does not know how to read.
+///
+/// A file from a newer Relay may parse anyway — nothing here denies unknown
+/// fields — and still mean something else. There is no migration, so say so
+/// rather than half-import it. Both commands that take a foreign file call
+/// this, so the message cannot drift between them.
+fn check_schema(cfg: &Config) -> Result<(), String> {
+    if cfg.schema_version != SCHEMA_VERSION {
+        return Err(format!(
+            "this file is schema version {}, and this Relay reads version {SCHEMA_VERSION}",
+            cfg.schema_version
+        ));
+    }
+    Ok(())
 }
 
 /// Adopts the config at `path` as this machine's and writes it.
@@ -80,18 +107,25 @@ pub fn import_config(
     this_host: HostIndex,
     leave_to: Option<HostIndex>,
 ) -> Result<Config, String> {
-    let mut cfg = Config::load(Path::new(&path)).map_err(|err| err.to_string())?;
-    // A file from a newer Relay may parse and still mean something else; there
-    // is no migration, so say so rather than half-import it.
-    if cfg.schema_version != SCHEMA_VERSION {
-        return Err(format!(
-            "this file is schema version {}, and this Relay reads version {SCHEMA_VERSION}",
-            cfg.schema_version
-        ));
-    }
+    import_config_to(&paths::config_path(), Path::new(&path), this_host, leave_to)
+}
+
+/// The body of [`import_config`] against an explicit live path, so the order it
+/// works in — schema gate, adopt, validate, atomic write — can be tested
+/// without touching the real config file. Every step before the write is a
+/// plain early return, which is what keeps a bad file from destroying a good
+/// config.
+fn import_config_to(
+    live: &Path,
+    source: &Path,
+    this_host: HostIndex,
+    leave_to: Option<HostIndex>,
+) -> Result<Config, String> {
+    let mut cfg = Config::load(source).map_err(|err| err.to_string())?;
+    check_schema(&cfg)?;
     cfg.adopt(this_host, leave_to)
         .map_err(|err| err.to_string())?;
-    save_config_to(&paths::config_path(), &cfg)?;
+    save_config_to(live, &cfg)?;
     Ok(cfg)
 }
 
@@ -101,7 +135,22 @@ pub fn import_config(
 /// config that is actually running, so an unsaved edit must not travel.
 #[tauri::command]
 pub fn export_config(path: String) -> Result<(), String> {
-    std::fs::copy(paths::config_path(), Path::new(&path))
+    export_config_to(&paths::config_path(), Path::new(&path))
+}
+
+/// The body of [`export_config`] against an explicit source, so the guard below
+/// can be tested without touching the real config file.
+fn export_config_to(source: &Path, dest: &Path) -> Result<(), String> {
+    // `fs::copy` onto its own source truncates it to nothing and still reports
+    // success, so the one destination we must refuse is the file we are reading.
+    // Paths cannot settle this — a symlink, a hard link and a case-different
+    // spelling all name the same inode — so compare the inode itself.
+    if let (Ok(source_meta), Ok(dest_meta)) = (fs::metadata(source), fs::metadata(dest)) {
+        if source_meta.dev() == dest_meta.dev() && source_meta.ino() == dest_meta.ino() {
+            return Err(SAME_FILE.to_string());
+        }
+    }
+    fs::copy(source, dest)
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -279,5 +328,82 @@ mod tests {
         save_config_to(&path, &broken).expect_err("must not validate");
 
         assert_eq!(Config::load(&path).expect("load"), valid_config());
+    }
+
+    #[test]
+    fn exporting_onto_the_live_file_is_refused_and_the_file_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        save_config_to(&path, &valid_config()).expect("save");
+        let before = fs::read(&path).expect("read");
+
+        export_config_to(&path, &path).expect_err("exporting onto itself must be refused");
+
+        // The refusal is incidental; what matters is that the config is still
+        // there. `fs::copy` would have left it at zero bytes.
+        assert_eq!(fs::read(&path).expect("read"), before);
+    }
+
+    /// Writes `cfg` to `path` as the file a user would have picked — plain
+    /// serialization, not [`save_config_to`], so an invalid one can be written.
+    fn write_source(path: &Path, cfg: &Config) {
+        fs::write(path, serde_json::to_string_pretty(cfg).expect("serialize")).expect("write");
+    }
+
+    /// A live file and a source file in one temp dir, with the live file's bytes
+    /// as they were before the import.
+    fn import_fixture() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        Vec<u8>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("config.json");
+        let source = dir.path().join("exported.json");
+        save_config_to(&live, &valid_config()).expect("save the live config");
+        let before = fs::read(&live).expect("read");
+        (dir, live, source, before)
+    }
+
+    #[test]
+    fn a_newer_schema_is_refused_and_the_live_config_survives() {
+        let (_dir, live, source, before) = import_fixture();
+        let mut newer = valid_config();
+        newer.schema_version = SCHEMA_VERSION + 1;
+        write_source(&source, &newer);
+
+        let err = import_config_to(&live, &source, 1, None).expect_err("must refuse");
+        assert!(err.contains("schema version"), "unexpected message: {err}");
+        assert_eq!(fs::read(&live).expect("read"), before);
+    }
+
+    #[test]
+    fn an_adopt_that_fails_leaves_the_live_config_alone() {
+        let (_dir, live, source, before) = import_fixture();
+        write_source(&source, &valid_config());
+
+        // The example declares hosts 1 and 2; 9 is not one of them.
+        import_config_to(&live, &source, 9, None).expect_err("must refuse an undeclared host");
+        assert_eq!(fs::read(&live).expect("read"), before);
+    }
+
+    #[test]
+    fn a_good_import_becomes_this_machine_s_config() {
+        let (_dir, live, source, _before) = import_fixture();
+        let exported = valid_config(); // this_host 1, as the other Mac wrote it
+        write_source(&source, &exported);
+
+        let returned = import_config_to(&live, &source, 2, Some(1)).expect("must import");
+        let written = Config::load(&live).expect("load");
+        assert_eq!(written, returned);
+
+        // Only this machine's two answers differ from the file that travelled.
+        let mut expected = exported;
+        expected.this_host = 2;
+        for device in &mut expected.devices {
+            device.leave_to = device.is_trigger.then_some(1);
+        }
+        assert_eq!(written, expected);
     }
 }
