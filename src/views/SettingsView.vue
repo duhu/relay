@@ -839,20 +839,31 @@ function optionsFor(display: DisplayConfig, host: number): ipc.InputSource[] {
 }
 
 /**
- * One option's label. The code itself is deliberately absent — picking by name
- * is the whole point — except for codes the standard does not name.
- *
- * "current" is only ever shown on the display that was actually asked — by its
- * UUID, since row indices shift. Claiming to know what a display nobody read is
- * showing would be a guess.
+ * One option's label: the MCCS name, or the bare code for an input the
+ * standard does not name. No "current" marker — a closed `<select>` shows
+ * this text in a fixed-width box, and the marker is now the optgroup the
+ * option sits in.
  */
-function optionLabel(source: ipc.InputSource, display: DisplayConfig): string {
-  const name = source.name ?? t("displays.inputCode", { code: source.code });
-  const asked =
-    screenUuid.value !== null &&
-    screenUuid.value.toLowerCase() === display.edid_uuid.toLowerCase();
-  const known = asked && screenInput.value === source.code;
-  return known ? t("displays.inputCurrent", { name }) : name;
+function optionLabel(source: ipc.InputSource): string {
+  return source.name ?? t("displays.inputCode", { code: source.code });
+}
+
+/**
+ * The option the monitor says it is showing, when this row is the one
+ * `readScreen` (or the row's own read button) actually asked. A row nobody
+ * read gets `null`: it must not claim to know.
+ */
+function currentOption(display: DisplayConfig, host: number): ipc.InputSource | null {
+  if (screenInput.value === null || screenUuid.value === null) return null;
+  if (screenUuid.value.toLowerCase() !== display.edid_uuid.toLowerCase()) return null;
+  return optionsFor(display, host).find((s) => s.code === screenInput.value) ?? null;
+}
+
+/** Everything `currentOption` did not take, in the order the monitor gave. */
+function otherOptions(display: DisplayConfig, host: number): ipc.InputSource[] {
+  const current = currentOption(display, host);
+  const all = optionsFor(display, host);
+  return current === null ? all : all.filter((s) => s.code !== current.code);
 }
 
 function choose(display: DisplayConfig, host: number, raw: string) {
@@ -1159,13 +1170,34 @@ async function switchTo(host: Host) {
                           "
                         >
                           <option value="">{{ t("displays.inputEmpty") }}</option>
-                          <option
-                            v-for="source in optionsFor(display, host.index)"
-                            :key="source.code"
-                            :value="source.code"
-                          >
-                            {{ optionLabel(source, display) }}
-                          </option>
+                          <template v-if="currentOption(display, host.index)">
+                            <optgroup :label="t('displays.inputGroupCurrent')">
+                              <option
+                                :key="currentOption(display, host.index)!.code"
+                                :value="currentOption(display, host.index)!.code"
+                              >
+                                {{ optionLabel(currentOption(display, host.index)!) }}
+                              </option>
+                            </optgroup>
+                            <optgroup :label="t('displays.inputGroupOther')">
+                              <option
+                                v-for="source in otherOptions(display, host.index)"
+                                :key="source.code"
+                                :value="source.code"
+                              >
+                                {{ optionLabel(source) }}
+                              </option>
+                            </optgroup>
+                          </template>
+                          <template v-else>
+                            <option
+                              v-for="source in optionsFor(display, host.index)"
+                              :key="source.code"
+                              :value="source.code"
+                            >
+                              {{ optionLabel(source) }}
+                            </option>
+                          </template>
                           <option value="custom">{{ t("displays.inputCustom") }}</option>
                         </select>
                         <template v-else>

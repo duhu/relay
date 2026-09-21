@@ -118,7 +118,8 @@ const zhHans: Record<string, string> = {
   "displays.rowGone": "这一行已经不在了，读到的输入源没有写进去。",
   "displays.inputCode": "输入源 {code}",
   "displays.inputCustom": "自定义…",
-  "displays.inputCurrent": "{name} · 当前",
+  "displays.inputGroupCurrent": "现在显示的",
+  "displays.inputGroupOther": "其它输入源",
   "displays.inputEmpty": "未选择",
   "displays.inputBackToList": "回到列表",
 
@@ -289,7 +290,8 @@ const en: Record<string, string> = {
   "displays.rowGone": "That row is gone, so the input source that came back was not written.",
   "displays.inputCode": "Input {code}",
   "displays.inputCustom": "Custom…",
-  "displays.inputCurrent": "{name} · current",
+  "displays.inputGroupCurrent": "Showing now",
+  "displays.inputGroupOther": "Other inputs",
   "displays.inputEmpty": "Not set",
   "displays.inputBackToList": "Back to the list",
 
