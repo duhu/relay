@@ -7,7 +7,6 @@ mod windows;
 
 use std::fs::{self, File};
 use std::io;
-use std::path::Path;
 use std::sync::Arc;
 
 use relay_core::config::Config;
@@ -21,14 +20,6 @@ use crate::ipc::{self, Request, Response};
 
 /// How many log entries the settings window's Log view can scroll back through.
 const LOG_CAPACITY: usize = 200;
-
-/// The first-run configuration, taken from `docs/specs/relay-core.md` §6.
-///
-/// Its `this_host` is a placeholder no host declares, so the config does not
-/// validate and the core stays `Unconfigured` until the user picks this
-/// machine: nothing may switch a host slot nobody confirmed is paired
-/// (`AGENTS.md`).
-const EXAMPLE_CONFIG: &str = include_str!("example-config.json");
 
 /// Run the menu bar app. Blocks until the app exits.
 pub fn run() {
@@ -84,7 +75,8 @@ pub fn run() {
             serve_ipc(app.handle(), core.clone());
             tray::build(app.handle(), core.clone())?;
             configure_autostart(app.handle(), core.clone());
-            prompt_for_input_monitoring(core);
+            prompt_for_input_monitoring(core.clone());
+            open_settings_if_unconfigured(app.handle(), core);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -115,33 +107,53 @@ fn acquire_single_instance_lock() -> io::Result<Option<File>> {
 }
 
 /// Starts logging and the core loop.
+///
+/// A Mac that has never been configured has no config file, and nothing here
+/// invents one: the core comes up `Unconfigured` and
+/// [`open_settings_if_unconfigured`] sends the user to the wizard, which writes
+/// the first file there will ever be.
 fn start_core() -> CoreHandle {
     let log = relay_core::log::init(&paths::log_dir(), LOG_CAPACITY);
     let config_path = paths::config_path();
-    seed_config_if_missing(&config_path);
 
     // `Core::start` spawns its loop onto the ambient tokio runtime, so it has
     // to run inside Tauri's rather than on the bare setup thread.
     tauri::async_runtime::block_on(async move { Core::start(config_path, log) })
 }
 
-/// Writes the example config the first time Relay ever runs, so the user has
-/// something to edit instead of an empty settings window.
-fn seed_config_if_missing(path: &Path) {
-    if path.exists() {
-        return;
-    }
-    let written = path
-        .parent()
-        .map(fs::create_dir_all)
-        .unwrap_or(Ok(()))
-        .and_then(|()| fs::write(path, EXAMPLE_CONFIG));
-    match written {
-        Ok(()) => tracing::info!(path = %path.display(), "wrote the first-run example config"),
-        Err(err) => {
-            tracing::error!(path = %path.display(), error = %err, "cannot write the example config")
+/// Puts the settings window on screen when there is nothing for the core to
+/// run on, so a fresh Mac opens the wizard by itself instead of leaving a tray
+/// icon that answers every click with "not configured".
+///
+/// The three ways to have nothing to run on are one question to the core: no
+/// config file at all, a file that does not load or validate, and a config
+/// whose `this_host` names a slot no host declares all leave `config_ok` false
+/// — the last of them is checked on its own as well, because a `this_host`
+/// nobody declares is exactly the state an interrupted import leaves behind.
+///
+/// The frontend decides on its own whether that window renders the wizard or
+/// the settings form, so there is no route to ask for here.
+///
+/// Asking waits for the core's loop to answer, which it cannot do until
+/// Tauri's runtime is running, so — like [`prompt_for_input_monitoring`] —
+/// this spawns and lets `setup` return.
+fn open_settings_if_unconfigured(app: &AppHandle, core: CoreHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let status = core.status().await;
+        let declared = status
+            .this_host
+            .is_some_and(|this| status.hosts.iter().any(|(index, _)| *index == this));
+        if status.config_ok && declared {
+            return;
         }
-    }
+        tracing::info!(
+            config_ok = status.config_ok,
+            this_host_declared = declared,
+            "nothing to run on yet; opening the settings window for the wizard",
+        );
+        windows::open(&app, "settings");
+    });
 }
 
 /// Serves the CLI's unix socket for as long as the app runs.
@@ -238,7 +250,7 @@ fn configure_autostart(app: &AppHandle, core: CoreHandle) {
 }
 
 /// `options.launch_at_login` as the file has it. A config that does not load
-/// yet gets the example's default, which is on.
+/// yet — a Mac still in the wizard — gets the serde default, which is on.
 fn launch_at_login() -> bool {
     Config::load(&paths::config_path())
         .map(|config| config.options.launch_at_login)
@@ -312,35 +324,4 @@ fn configure_activation_policy(app: &mut App) {
     ns_app.deactivate();
     #[allow(deprecated)]
     ns_app.activateIgnoringOtherApps(false);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_example_config_parses_but_does_not_validate() {
-        let config: Config = serde_json::from_str(EXAMPLE_CONFIG).expect("valid json");
-        // A first run must land in `Unconfigured`, never in a state where a
-        // tray click could reach an unpaired host slot.
-        assert!(config.validate().is_err());
-        assert!(config.options.launch_at_login);
-    }
-
-    #[test]
-    fn the_example_config_never_declares_host_slot_zero() {
-        let config: Config = serde_json::from_str(EXAMPLE_CONFIG).expect("valid json");
-        // Slot 0 is the unpaired Easy-Switch slot in the documented setup;
-        // seeding it would let a tray click disconnect the device for good.
-        assert_eq!(
-            config.hosts.iter().map(|h| h.index).collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-        for display in &config.displays {
-            assert_eq!(
-                display.input_by_host.keys().collect::<Vec<_>>(),
-                vec!["1", "2"]
-            );
-        }
-    }
 }

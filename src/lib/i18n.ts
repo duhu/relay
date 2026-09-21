@@ -255,7 +255,10 @@ const zhHans: Record<string, string> = {
   // The footer.
   "footer.savedNote": "保存后立即生效",
 
-  // What the shape check says before the backend ever sees the config.
+  // What the shape check says before the backend ever sees the config. The
+  // first two are what a blank form's first save runs into.
+  "validate.noHosts": "还没有机器。到「机器与屏幕」把共用这套键鼠的 Mac 一台台加上。",
+  "validate.noThisHost": "还没说哪一台是本机。到「机器与屏幕」，在「本机」那一列点上这台。",
   "validate.hostChannel": "第 {row} 行机器的通道号必须是 1–3 的整数。",
   "validate.displayInput": "显示器「{name}」在通道 {channel} 的输入源必须是 0–255 的整数。",
   "validate.debounce": "防抖时间至少 {ms} ms，且必须是整数。",
@@ -272,6 +275,8 @@ const zhHans: Record<string, string> = {
   // Banners. The detail is whatever the backend said, which is still English
   // (the Rust side's `ConfigError` is not translated yet).
   "error.loadConfig": "无法读取配置文件：{detail}",
+  // The way out of a file that will not parse: the wizard writes a new one.
+  "error.loadConfigWizard": "用向导重新配置",
   "error.save": "保存失败：{detail}",
   "error.loadPermission": "无法读取输入监控状态：{detail}",
   "error.requestPermission": "无法请求输入监控授权：{detail}",
@@ -508,6 +513,10 @@ const en: Record<string, string> = {
 
   "footer.savedNote": "Changes take effect immediately",
 
+  "validate.noHosts":
+    "There are no Macs yet; add one for each Mac sharing this keyboard under “Macs & displays”.",
+  "validate.noThisHost":
+    "Nothing says which of these Macs is this one; mark it in the “This Mac” column under “Macs & displays”.",
   "validate.hostChannel": "The channel of Mac {row} has to be a whole number from 1 to 3.",
   "validate.displayInput":
     "The input source of display “{name}” on channel {channel} has to be a whole number from 0 to 255.",
@@ -522,6 +531,7 @@ const en: Record<string, string> = {
   "toast.exported": "Exported",
 
   "error.loadConfig": "Cannot read the config file: {detail}",
+  "error.loadConfigWizard": "Set it up with the wizard",
   "error.save": "Saving failed: {detail}",
   "error.loadPermission": "Cannot read the Input Monitoring state: {detail}",
   "error.requestPermission": "Cannot ask for Input Monitoring: {detail}",

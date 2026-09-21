@@ -506,9 +506,14 @@ const MIN_DEBOUNCE_MS = 100;
  * else is still the backend's to judge.
  */
 function shapeProblem(c: Config): string {
+  // The two shapes a blank form is in before anything has been filled in. The
+  // backend refuses both, but in its own words ("this_host 255 is not declared
+  // in hosts"), which is the wrong sentence to meet on a Mac's very first save.
+  if (c.hosts.length === 0) return t("validate.noHosts");
   for (const [i, host] of c.hosts.entries()) {
     if (!inRange(host.index, 0, 2)) return t("validate.hostChannel", { row: i + 1 });
   }
+  if (!c.hosts.some((host) => host.index === c.this_host)) return t("validate.noThisHost");
   for (const display of c.displays) {
     for (const [host, input] of Object.entries(display.input_by_host)) {
       if (!inRange(input, 0, 255)) {
@@ -1221,7 +1226,20 @@ async function switchTo(host: Host) {
     </header>
 
     <main>
-      <p v-if="banner" ref="bannerEl" class="banner">{{ banner }}</p>
+      <!--
+        The way out of a config file that does not parse. Everything else in
+        this window is behind `v-if="cfg"`, which such a file never fills, so
+        without this button the only way back to the wizard is to quit the app
+        and start it again. It sits outside that guard, and only appears when
+        there is no config: a banner over a form the user can still edit is not
+        a dead end.
+      -->
+      <p v-if="banner" ref="bannerEl" class="banner">
+        <span>{{ banner }}</span>
+        <button v-if="!cfg" class="mini" @click="openWizard()">
+          {{ t("error.loadConfigWizard") }}
+        </button>
+      </p>
       <p v-if="blank" class="blank">{{ t("blank.note") }}</p>
 
       <template v-if="tab === 'overview'">
@@ -1232,7 +1250,14 @@ async function switchTo(host: Host) {
             <span class="muted">{{ heroDetail }}</span>
             <span class="pill" :class="toneClass">{{ stateLabel }}</span>
           </p>
-          <div v-if="status && !status.config_ok" class="row">
+          <!--
+            A Mac with no config file has already been told so, gently, by the
+            note above the form. The core's own words for the same fact are the
+            operating system's ("No such file or directory"), and in red under
+            that note they read as a fault on a machine where nothing is wrong
+            yet. A file that exists and does not load still says so here.
+          -->
+          <div v-if="status && !status.config_ok && !blank" class="row">
             <span class="bad">
               {{
                 status.config_error
@@ -1779,6 +1804,12 @@ main {
   background: var(--bad-bg);
   color: var(--bad);
   white-space: pre-wrap;
+}
+
+/* The banner's own button, when it carries one: clear of the message, and
+   free to wrap below it when the message takes the whole width. */
+.banner .mini {
+  margin-left: 8px;
 }
 
 /* Not a failure, so not the banner's red: a blank form is a normal first run. */

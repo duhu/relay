@@ -37,7 +37,7 @@ relay (menu bar, LSUIElement)                 relay CLI（短命）
 - **CLI**：解析参数 → 经 IPC 发给常驻实例 → 打印结果 → 退出码 0 成功 / 1 失败 / 2 用法错误 / 3 常驻实例不在。
 - 常驻实例不存在时 CLI 自启它（`detach` 方式，同 AskHuman `daemon/spawn.rs`）。
 
-## 目录结构（M2 实际；标 ▸ 的为 M3+ 目标态）
+## 目录结构
 
 ```
 relay/
@@ -47,8 +47,8 @@ relay/
   scripts/            dev-install.sh（build --debug → /Applications/Relay-dev.app → 签名 → symlink relay）· gen-icons.py
 
   src/                Vue 前端（无组件库）
-    App.vue           按 location.hash 路由 settings / log（▸ wizard，M4）
-    views/SettingsView.vue（可编辑整份 config）· LogView.vue
+    App.vue           按 location.hash 路由 settings / log / wizard；机器没配好时直接进向导
+    views/SettingsView.vue（可编辑整份 config）· WizardView.vue（首次运行 / 导入）· LogView.vue
     lib/ipc.ts        invoke 封装 + 与 Rust 结构一一对应的 TS 类型
     lib/i18n.ts       中英两份字典 + t()；语言取自 Status.language（核心已把 auto 解析成具体值）
 
@@ -59,7 +59,7 @@ relay/
     src/main.rs       cli::dispatch()
     src/cli.rs        argv 解析、switch/status/--settings/--devices/--displays、IPC client、自启常驻实例
     src/ipc.rs        unix socket server + NDJSON Request/Response
-    src/app/          mod.rs（setup、单实例锁、autostart、TCC 提示）· tray.rs · commands.rs（含 scan_devices / list_displays）· windows.rs · paths.rs · example-config.json
+    src/app/          mod.rs（setup、单实例锁、autostart、TCC 提示、没配好就开窗进向导）· tray.rs · commands.rs（含 scan_devices / list_displays）· windows.rs · paths.rs
 
   crates/relay-core/  纯 Rust，无 Tauri 依赖
     types.rs          HostIndex · DeviceId · DeviceRole · TriggerEvent

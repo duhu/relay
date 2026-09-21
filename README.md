@@ -91,29 +91,39 @@ Build prerequisites: Rust 1.98+, pnpm, and the Xcode command line tools.
 
 ## First run
 
-Open **Settings** from the menu bar icon. Four tabs, in the order you need them:
+A Mac with no configuration opens its own window and asks whether this is the first
+Mac you are setting up or whether another one is already configured. Nothing is
+written to disk until the end.
 
-1. **Machines & screens** — name each Mac and give it a channel number. The channel
-   is literally the Easy-Switch key on your keyboard: the Mac you reach with key 2 is
-   channel 2. Mark which row is *this* Mac. Then add your monitor (**Scan displays**
-   fills in its name and EDID) and pick the input source each Mac uses from the list
-   the monitor reported — "HDMI 1", "DisplayPort 2", by name. The one on screen right
-   now sits at the top under **Showing now**, so the Mac you are sitting at can point
-   at its own port; **Read this Mac's input**, next to the EDID, fills that cell in
-   for you. A monitor that will not report its inputs leaves a plain number box, and
-   you type the code. **Custom…** at the end of the list covers a monitor that reports
-   too few; ↩ puts the cell back on the list.
-2. **Keyboard & mouse** — grant Input Monitoring, then **Scan devices**. Mark the
-   keyboard as the **trigger** (its leaving is what starts a switch) and the mouse as
-   **follow** (it gets sent along). A device is one or the other, never both.
-3. **Advanced** — debounce, cooldown, retries, and three behaviour switches. The
-   defaults are the ones that survived real use.
-4. **Overview** — where the screen, keyboard and mouse are right now, a manual switch
-   button per machine, and a step-by-step result of the last switch.
+**The first Mac — four steps:**
 
-Repeat on each Mac. The only thing that differs between machines is which row is
-marked "this Mac". Config lives at
-`~/Library/Application Support/Relay/config.json` and is reloaded when it changes.
+1. **Input Monitoring** — granted in System Settings; without it Relay cannot see the
+   keyboard come and go.
+2. **Keyboard and mouse** — Relay scans and you pick one **trigger** (the keyboard:
+   its leaving is what starts a switch) and one **follower** (the mouse: it gets sent
+   along). The devices also report which Easy-Switch channel they are on, which is how
+   Relay knows which Mac this one is.
+3. **The Macs** — name each Mac that shares the keyboard. The channel number is
+   literally the Easy-Switch key: the Mac you reach with key 2 is channel 2.
+4. **The display** — the shared monitor, then the input source each Mac shows on,
+   picked by name from what the monitor reports — "HDMI 1", "DisplayPort 2". The one
+   on screen right now is marked, so the Mac you are sitting at can point at its own
+   port. A monitor that will not report its inputs leaves a number box to type the
+   code into. You can skip this step and add the monitor in Settings later.
+
+At the end Relay offers to **export** the config. Take that file to the next Mac.
+
+**Every other Mac — import that file:** install Relay, start it, answer that another
+Mac is already set up, and choose the file. It asks which of these Macs this one is
+(the keyboard usually already knows) and, with three Macs, where a switch away from
+this one should go. Everything else — names, channels, input sources, devices,
+timings — comes from the file unchanged.
+
+Afterwards everything is in **Settings**, from the menu bar icon: **Overview** (where
+the screen, keyboard and mouse are, a manual switch per Mac, the last switch step by
+step), **Macs & displays**, **Keyboard & mouse**, and **Advanced** (debounce, cooldown,
+retries, behaviour switches, export/import, and **Run the wizard again**). Config lives
+at `~/Library/Application Support/Relay/config.json` and is reloaded when it changes.
 
 The interface is available in English and Simplified Chinese, following the system
 language unless you pick one in Advanced.

@@ -314,14 +314,62 @@ pub fn open_privacy_settings() -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// The first-run example, whose `this_host` is a slot no host declares.
+    /// A whole config as a file holds one, whose `this_host` is a slot no host
+    /// declares: it parses, and `validate()` refuses it.
+    ///
+    /// Slots 1 and 2 are the two paired Easy-Switch channels of the documented
+    /// setup; slot 0 is the unpaired one, which nothing here declares.
+    const INVALID_CONFIG: &str = r#"{
+      "schema_version": 1,
+      "this_host": 255,
+      "hosts": [
+        { "index": 1, "name": "Bam.Work" },
+        { "index": 2, "name": "Bam.Mini" }
+      ],
+      "displays": [
+        {
+          "edid_uuid": "05E39027-0000-0000-2F1D-0103803C2278",
+          "name": "AOC U2790R3B",
+          "input_by_host": { "1": 17, "2": 18 }
+        }
+      ],
+      "devices": [
+        {
+          "id": "046d:b366",
+          "name": "MX Mechanical",
+          "role": "keyboard",
+          "transport": "ble",
+          "is_trigger": true,
+          "follow": false,
+          "leave_to": null
+        },
+        {
+          "id": "046d:b023",
+          "name": "MX Master 3",
+          "role": "mouse",
+          "transport": "ble",
+          "is_trigger": false,
+          "follow": true,
+          "leave_to": null
+        }
+      ],
+      "timing": { "debounce_ms": 800, "cooldown_ms": 5000, "ddc_retries": 3 },
+      "hotkeys": { "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" },
+      "options": {
+        "switch_back_on_reconnect": true,
+        "pull_on_arrival": true,
+        "launch_at_login": true,
+        "language": "auto"
+      }
+    }"#;
+
     fn invalid_config() -> Config {
-        serde_json::from_str(super::super::EXAMPLE_CONFIG).expect("the example config parses")
+        serde_json::from_str(INVALID_CONFIG).expect("the fixture parses")
     }
 
     fn valid_config() -> Config {
         let mut cfg = invalid_config();
-        // The seed declares slots 1 and 2; slot 0 is the unpaired one.
+        // One of the two slots the fixture declares.
         cfg.this_host = 1;
         cfg
     }
@@ -434,7 +482,7 @@ mod tests {
         let (_dir, live, source, before) = import_fixture();
         write_source(&source, &valid_config());
 
-        // The example declares hosts 1 and 2; 9 is not one of them.
+        // The fixture declares hosts 1 and 2; 9 is not one of them.
         import_config_to(&live, &source, 9, None).expect_err("must refuse an undeclared host");
         assert_eq!(fs::read(&live).expect("read"), before);
     }
