@@ -6,9 +6,9 @@
 //! macOS release that renames or drops them breaks exactly here.
 //!
 //! Both directions are declared, and no more: reading the current input
-//! source (VCP 0x60) is what [`read_i2c`] carries, while Capabilities (0xF3)
-//! and the other VCP features stay M4 work — an unused `extern` declaration
-//! is a promise we have not tested.
+//! source (VCP 0x60) and the capabilities string (0xF3) is what [`read_i2c`]
+//! carries, while the other VCP features stay M4 work — an unused `extern`
+//! declaration is a promise we have not tested.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;

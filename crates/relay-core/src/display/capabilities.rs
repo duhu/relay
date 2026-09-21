@@ -58,6 +58,11 @@ pub fn input_source_name(code: u8) -> Option<&'static str> {
 }
 
 /// The body of `header(...)`, with brackets balanced, or `None`.
+///
+/// The search is deliberately not anchored to the top level: it takes the
+/// first literal occurrence of `header` anywhere in the string, so
+/// [`parse_input_codes`] relies on no earlier section containing the text
+/// `vcp(`.
 fn section_body<'a>(caps: &'a str, header: &str) -> Option<&'a str> {
     let start = caps.find(header)? + header.len();
     let mut depth = 1usize;
@@ -154,13 +159,23 @@ pub(crate) fn caps_packet(offset: u16) -> [u8; 5] {
 ///
 /// `buf[1]` holds the message length with its high bit set; three of those
 /// bytes are the opcode and the echoed offset, so the rest is payload. A
-/// length of exactly three is the standard's end marker: an empty fragment.
+/// length of exactly three is the standard's end marker: an empty fragment,
+/// and 35 is the ceiling — three bytes of envelope plus the 32 of payload a
+/// fragment may carry. A longer claim is refused rather than trusted, because
+/// honouring it would splice the tail of the read buffer, which is bus data
+/// and not ours, into the capabilities string.
 pub(crate) fn parse_fragment(buf: &[u8]) -> Option<(u16, &[u8])> {
     if buf.len() < 5 || buf[2] != CAPS_REPLY {
         return None;
     }
+    if buf[1] & 0x80 == 0 {
+        return None;
+    }
     let len = usize::from(buf[1] & 0x7F);
-    if len < 3 || 2 + len > buf.len() {
+    // Three bytes of envelope plus at most 32 of payload: a longer claim means
+    // the tail of the read buffer, which is bus data and not ours, would be
+    // spliced into the capabilities string.
+    if !(3..=35).contains(&len) || 2 + len > buf.len() {
         return None;
     }
     Some((u16::from_be_bytes([buf[3], buf[4]]), &buf[5..2 + len]))
@@ -294,6 +309,18 @@ mod tests {
         // input source feature.
         let caps = "(vcp(14(01 60 05) CC(0C 60) 60(11 12)))";
         assert_eq!(parse_input_codes(caps), vec![0x11, 0x12]);
+    }
+
+    #[test]
+    fn an_input_list_outside_the_vcp_section_is_not_read() {
+        // A model name that happens to contain "60(" — what a `find("60(")`
+        // implementation would swallow whole.
+        assert_eq!(parse_input_codes("(model(E2460(11 12)))"), Vec::<u8>::new());
+        // And the same decoy ahead of a real list must not shift the answer.
+        assert_eq!(
+            parse_input_codes("(model(E2460(X))vcp(60(11 12)))"),
+            vec![0x11, 0x12]
+        );
     }
 
     #[test]
@@ -441,9 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn a_fragment_longer_than_the_reply_buffer_is_refused() {
-        // The length byte claims more than the five-byte envelope leaves.
+    fn a_fragment_longer_than_one_can_be_is_refused() {
+        // The length byte claims 40 where the protocol allows at most 35.
         let reply = vec![0x6E, 0x80 | 40, CAPS_REPLY, 0x00, 0x00, b'x'];
+        assert_eq!(parse_fragment(&reply), None);
         let transport = FragmentingTransport::new(vec![reply]);
         assert_eq!(collect_capabilities(&transport, 0x37, Duration::ZERO), None);
     }
