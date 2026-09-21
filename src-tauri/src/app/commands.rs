@@ -10,7 +10,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use relay_core::config::{Config, SCHEMA_VERSION};
+use relay_core::config::{Config, ConfigError, SCHEMA_VERSION};
 use relay_core::device::discovery::{self, DiscoveredDevice};
 use relay_core::display::capabilities::{self, InputSource};
 use relay_core::display::ddc::{self, DdcDisplay, DiscoveredDisplay};
@@ -45,11 +45,39 @@ pub struct HidDeviceInfo {
     pub name: String,
 }
 
-/// The config as it is on disk. A missing or unparseable file is an error the
-/// settings window shows, not an empty form that would overwrite it on save.
+/// Why the config could not be handed to the window.
+///
+/// The two failures mean opposite things to the settings window: a file that is
+/// not there is a Mac nobody has configured yet, where a blank form is exactly
+/// right, while a file that is there and unreadable must stay an error — a
+/// blank form over it would invite a save that destroys it. The distinction is
+/// drawn here, where the `io::ErrorKind` still exists; the rendered message is
+/// the operating system's own words, which are localized and not worth matching
+/// on from TypeScript.
+#[derive(Clone, Debug, Serialize)]
+pub struct ConfigLoadError {
+    /// What went wrong, in the same words a plain string error carried before.
+    pub message: String,
+    /// There is no config file at all: this Mac has never been configured.
+    pub not_found: bool,
+}
+
+/// The config as it is on disk, or why it could not be read.
 #[tauri::command]
-pub fn get_config() -> Result<Config, String> {
-    Config::load(&paths::config_path()).map_err(|err| err.to_string())
+pub fn get_config() -> Result<Config, ConfigLoadError> {
+    load_config_from(&paths::config_path())
+}
+
+/// The body of [`get_config`] against an explicit path, so the one distinction
+/// it draws can be tested without touching the real config file.
+fn load_config_from(path: &Path) -> Result<Config, ConfigLoadError> {
+    Config::load(path).map_err(|err| ConfigLoadError {
+        not_found: matches!(
+            &err,
+            ConfigError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound
+        ),
+        message: err.to_string(),
+    })
 }
 
 /// Validates `cfg` and, only then, writes it atomically.
@@ -296,6 +324,24 @@ mod tests {
         // The seed declares slots 1 and 2; slot 0 is the unpaired one.
         cfg.this_host = 1;
         cfg
+    }
+
+    #[test]
+    fn a_missing_config_file_is_reported_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = load_config_from(&dir.path().join("config.json")).expect_err("no such file");
+        assert!(err.not_found, "unexpected message: {}", err.message);
+    }
+
+    #[test]
+    fn a_broken_config_file_is_not_reported_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(&path, "{ not json").unwrap();
+
+        let err = load_config_from(&path).expect_err("must not parse");
+        assert!(!err.not_found, "unexpected message: {}", err.message);
     }
 
     #[test]

@@ -135,9 +135,29 @@ export interface InputSource {
   name: string | null;
 }
 
-/** Reads the config file; rejects when it is missing or unparseable. */
+/** Why `get_config` refused; mirrors `ConfigLoadError` on the Rust side. */
+export interface ConfigLoadError {
+  message: string;
+  /** There is no config file at all: this Mac has never been configured. */
+  not_found: boolean;
+}
+
+/**
+ * Reads the config file; rejects with a {@link ConfigLoadError} when it is
+ * missing or unparseable. Only `get_config` rejects with this shape — every
+ * other command still rejects with a plain string.
+ */
 export function getConfig(): Promise<Config> {
   return invoke<Config>("get_config");
+}
+
+/** Narrows a `getConfig` rejection, which crosses `invoke` as a plain object. */
+export function asConfigLoadError(err: unknown): ConfigLoadError | null {
+  if (typeof err !== "object" || err === null) return null;
+  const { message, not_found: notFound } = err as Partial<ConfigLoadError>;
+  return typeof message === "string" && typeof notFound === "boolean"
+    ? { message, not_found: notFound }
+    : null;
 }
 
 /** Validates and writes the config; rejects with the validation message. */

@@ -52,7 +52,40 @@ const STATE_KEYS: Record<string, string> = {
 /** The states in which something is under way rather than settled. */
 const BUSY_STATES = ["Confirming", "Switching", "Cooldown"];
 
+/** Mirrors `SCHEMA_VERSION` in `crates/relay-core/src/config.rs`. */
+const SCHEMA_VERSION = 1;
+
+/**
+ * What a Mac with no config file starts from: nothing declared, and everything
+ * the form does not ask about at the same defaults the wizard writes on a first
+ * run (`timing` from the spec's example config, `options` from the serde
+ * defaults of `relay_core::config::Options`).
+ *
+ * `this_host` is 255, the slot no host can declare — "not chosen yet", the same
+ * sentinel the first-run seed carried. It fails validation on purpose: an empty
+ * config is not savable, and the backend says what is missing.
+ */
+function emptyConfig(): Config {
+  return {
+    schema_version: SCHEMA_VERSION,
+    this_host: 255,
+    hosts: [],
+    displays: [],
+    devices: [],
+    timing: { debounce_ms: 800, cooldown_ms: 5000, ddc_retries: 3 },
+    hotkeys: {},
+    options: {
+      switch_back_on_reconnect: true,
+      pull_on_arrival: true,
+      launch_at_login: true,
+      language: "auto",
+    },
+  };
+}
+
 const cfg = ref<Config | null>(null);
+/** `cfg` is a blank config this window invented, because there is no file. */
+const blank = ref(false);
 /**
  * `cfg` as it was when the file was last read or written, serialized.
  *
@@ -194,14 +227,7 @@ async function onShown() {
   // decides which mistake to avoid: a window nobody has typed into has no
   // reason to keep showing a stale file, and one that has been typed into has
   // every reason not to lose the typing.
-  if (JSON.stringify(cfg.value) === baseline.value) {
-    try {
-      cfg.value = await ipc.getConfig();
-      baseline.value = JSON.stringify(cfg.value);
-    } catch (err) {
-      await showBanner(t("error.loadConfig", { detail: String(err) }));
-    }
-  }
+  if (JSON.stringify(cfg.value) === baseline.value) await readConfig();
   await refreshStatus();
   try {
     granted.value = await ipc.inputMonitoringGranted();
@@ -212,19 +238,42 @@ async function onShown() {
   await readScreen();
 }
 
+/**
+ * Puts the config file into `cfg` — or, when there is no file at all, a blank
+ * config, with the note that says so.
+ *
+ * The two failures `get_config` can report mean opposite things here. No file
+ * is the normal state of a Mac nobody has configured yet: the wizard's way out
+ * leads straight to this form, and it has to be a form, not an error. A file
+ * that is there and unreadable stays an error — offering a blank form over it
+ * would invite a save that destroys whatever is in it.
+ */
+async function readConfig() {
+  try {
+    cfg.value = await ipc.getConfig();
+    blank.value = false;
+    baseline.value = JSON.stringify(cfg.value);
+    banner.value = "";
+  } catch (err) {
+    const failure = ipc.asConfigLoadError(err);
+    if (failure?.not_found) {
+      cfg.value = emptyConfig();
+      blank.value = true;
+      baseline.value = JSON.stringify(cfg.value);
+      banner.value = "";
+      return;
+    }
+    await showBanner(t("error.loadConfig", { detail: failure?.message ?? String(err) }));
+  }
+}
+
 async function load() {
   // A reload replaces the device and display rows, so the scan lists — whose
   // "already added" state is read off those rows — must not outlive them.
   found.value = null;
   foundDisplays.value = null;
   customCells.value = new Set();
-  try {
-    cfg.value = await ipc.getConfig();
-    baseline.value = JSON.stringify(cfg.value);
-    banner.value = "";
-  } catch (err) {
-    await showBanner(t("error.loadConfig", { detail: String(err) }));
-  }
+  await readConfig();
   await refreshStatus();
   try {
     granted.value = await ipc.inputMonitoringGranted();
@@ -493,8 +542,10 @@ async function save() {
   try {
     await ipc.saveConfig(c);
     // What was just written is what the file now holds, so this is the new
-    // "untouched" for `onShown` to compare against.
+    // "untouched" for `onShown` to compare against — and there is now a file,
+    // so the note about there not being one goes.
     baseline.value = JSON.stringify(c);
+    blank.value = false;
     // The validation message is the only thing the banner ever shows for a
     // save, so an accepted one clears it.
     banner.value = "";
@@ -1171,6 +1222,7 @@ async function switchTo(host: Host) {
 
     <main>
       <p v-if="banner" ref="bannerEl" class="banner">{{ banner }}</p>
+      <p v-if="blank" class="blank">{{ t("blank.note") }}</p>
 
       <template v-if="tab === 'overview'">
         <section class="card">
@@ -1727,6 +1779,16 @@ main {
   background: var(--bad-bg);
   color: var(--bad);
   white-space: pre-wrap;
+}
+
+/* Not a failure, so not the banner's red: a blank form is a normal first run. */
+.blank {
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
 }
 
 /* The step name, which carries a display or device name and may not fit. */

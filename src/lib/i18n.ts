@@ -249,6 +249,9 @@ const zhHans: Record<string, string> = {
   "wizard.errorRead": "无法读取这个配置文件：{detail}",
   "wizard.errorImport": "导入失败：{detail}",
 
+  // The note above a form that has no file behind it.
+  "blank.note": "这台 Mac 还没有配置，下面是一份空白的。点「保存」之前不会写入任何文件。",
+
   // The footer.
   "footer.savedNote": "保存后立即生效",
 
@@ -499,6 +502,9 @@ const en: Record<string, string> = {
     "Two Macs are both on input source {code}; one input source can name only one Mac.",
   "wizard.errorRead": "Cannot read that config file: {detail}",
   "wizard.errorImport": "Importing failed: {detail}",
+
+  "blank.note":
+    "This Mac has no configuration yet, so this one is blank. Nothing is written until you save.",
 
   "footer.savedNote": "Changes take effect immediately",
 
