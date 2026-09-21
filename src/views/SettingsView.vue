@@ -1247,7 +1247,8 @@ async function switchTo(host: Host) {
                           :title="t('displays.edidHint')"
                         />
                         <button
-                          class="mini read-input"
+                          v-if="cfg.hosts.some((host) => host.index === cfg!.this_host)"
+                          class="mini"
                           :title="loadingSources ? t('displays.readBusy') : t('displays.readTitle')"
                           :disabled="readingInput !== null || readingScreen || loadingSources"
                           @click="readInput(display, cfg.this_host, i)"
