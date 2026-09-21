@@ -275,12 +275,18 @@ async function readScreen() {
  * the cache are skipped, and so are rows that share a UUID: two hand-added rows
  * both carry "" and would otherwise cost the same monitor two full timeouts.
  *
+ * `refresh` asks every configured display again and replaces what the cache
+ * holds. Only the scan button passes it: a monitor that stayed silent the first
+ * time — asleep, or on another Mac's input — would otherwise keep its empty
+ * list for the rest of the window's life, and the scan button is the one manual
+ * retry the feature has. Every other caller wants the cheap cached pass.
+ *
  * It shares the DDC cable with the two reads above and with the core's own
  * switching, so it waits its turn under exactly the same rules — and, holding
  * the cable longest of anything here, it asks the core for a fresh state first
  * and hands the cable back to the screen read it displaced.
  */
-async function loadInputSources() {
+async function loadInputSources(refresh = false) {
   const c = cfg.value;
   if (!c || c.displays.length === 0) return;
   if (loadingSources.value || readingScreen.value || readingInput.value !== null) return;
@@ -294,9 +300,13 @@ async function loadInputSources() {
     if (state === "Switching" || state === "Confirming") return;
 
     const byUuid: Record<string, ipc.InputSource[]> = { ...inputSources.value };
+    // What this pass has already asked, so two rows sharing a UUID still cost
+    // one round trip even when the cache is being replaced rather than filled.
+    const asked = new Set<string>();
     for (const display of c.displays) {
       const key = display.edid_uuid.toLowerCase();
-      if (key in byUuid) continue;
+      if (asked.has(key) || (!refresh && key in byUuid)) continue;
+      asked.add(key);
       // A display that will not answer costs one round trip and yields an
       // empty list; the row simply keeps its number box.
       byUuid[key] = await ipc.listInputSources(display.edid_uuid);
@@ -675,7 +685,9 @@ async function toggleDisplayScan() {
   scanningDisplays.value = true;
   try {
     foundDisplays.value = await ipc.listDisplays();
-    void loadInputSources();
+    // The manual retry: a display that would not answer earlier gets asked
+    // again rather than keeping the empty list it was cached with.
+    void loadInputSources(true);
   } catch (err) {
     await showBanner(t("error.scanDisplays", { detail: String(err) }));
   } finally {
@@ -853,6 +865,17 @@ function choose(display: DisplayConfig, host: number, raw: string) {
     return;
   }
   display.input_by_host[String(host)] = Number(raw);
+}
+
+/**
+ * Leaves the hand-typed code behind and goes back to the monitor's own
+ * list. The value stays put — `optionsFor` keeps a code the monitor did
+ * not list as an option of its own, so nothing has to be re-picked.
+ */
+function backToList(display: DisplayConfig, host: number) {
+  const next = new Set(customCells.value);
+  next.delete(cellKey(display, host));
+  customCells.value = next;
 }
 
 function addDevice(device?: Partial<DeviceConfig>) {
@@ -1115,7 +1138,7 @@ async function switchTo(host: Host) {
                     v-for="host in cfg.hosts"
                     :key="host.index"
                     :title="t('displays.inputHint')"
-                    :style="{ width: host.index === cfg.this_host ? '168px' : '126px' }"
+                    style="width: 136px"
                   >
                     {{ hostName(host) }}
                   </th>
@@ -1145,25 +1168,29 @@ async function switchTo(host: Host) {
                           </option>
                           <option value="custom">{{ t("displays.inputCustom") }}</option>
                         </select>
-                        <input
-                          v-else
-                          type="number"
-                          min="0"
-                          max="255"
-                          :value="inputFor(display, host.index)"
-                          @input="
-                            setInput(display, host.index, ($event.target as HTMLInputElement).value)
-                          "
-                        />
-                        <button
-                          v-if="host.index === cfg.this_host"
-                          class="mini"
-                          :title="loadingSources ? t('displays.readBusy') : t('displays.readTitle')"
-                          :disabled="readingInput !== null || readingScreen || loadingSources"
-                          @click="readInput(display, host.index, i)"
-                        >
-                          {{ readingInput === i ? t("displays.reading") : t("displays.read") }}
-                        </button>
+                        <template v-else>
+                          <input
+                            type="number"
+                            min="0"
+                            max="255"
+                            :value="inputFor(display, host.index)"
+                            @input="
+                              setInput(
+                                display,
+                                host.index,
+                                ($event.target as HTMLInputElement).value,
+                              )
+                            "
+                          />
+                          <button
+                            v-if="sourcesFor(display).length > 0"
+                            class="mini"
+                            :title="t('displays.inputBackToList')"
+                            @click="backToList(display, host.index)"
+                          >
+                            ↩
+                          </button>
+                        </template>
                       </div>
                     </td>
                     <td class="center">
@@ -1179,13 +1206,23 @@ async function switchTo(host: Host) {
                   </tr>
                   <tr class="meta">
                     <td :colspan="cfg.hosts.length + 2">
-                      <span class="muted">{{ t("displays.edid") }}</span>
-                      <input
-                        v-model="display.edid_uuid"
-                        type="text"
-                        class="edid"
-                        :title="t('displays.edidHint')"
-                      />
+                      <div class="input-cell">
+                        <span class="muted">{{ t("displays.edid") }}</span>
+                        <input
+                          v-model="display.edid_uuid"
+                          type="text"
+                          class="edid"
+                          :title="t('displays.edidHint')"
+                        />
+                        <button
+                          class="mini read-input"
+                          :title="loadingSources ? t('displays.readBusy') : t('displays.readTitle')"
+                          :disabled="readingInput !== null || readingScreen || loadingSources"
+                          @click="readInput(display, cfg.this_host, i)"
+                        >
+                          {{ readingInput === i ? t("displays.reading") : t("displays.readLong") }}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </template>
@@ -1532,6 +1569,19 @@ tr.meta select {
 
 tr.meta .edid {
   width: 300px;
+}
+
+/* The EDID line is also where this machine's read button lives, so it is a
+   flex row. The label and the button keep their own width and the uuid field
+   takes what is left — it must not collapse to nothing behind a long label. */
+tr.meta .input-cell > .muted,
+tr.meta .input-cell > button {
+  flex: none;
+}
+
+tr.meta .input-cell > .edid {
+  flex: 1 1 300px;
+  width: auto;
 }
 
 tr.meta .id {

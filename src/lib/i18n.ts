@@ -108,7 +108,7 @@ const zhHans: Record<string, string> = {
   "displays.inputHint": "这台机器占用屏幕时要切到的 DDC 输入源编号",
   "displays.readTitle": "读取这台显示器当前的输入源",
   "displays.readBusy": "正在问显示器…",
-  "displays.read": "读取",
+  "displays.readLong": "读取本机当前输入源",
   "displays.reading": "…",
   "displays.add": "＋ 添加显示器",
   "displays.scan": "扫描显示器",
@@ -120,6 +120,7 @@ const zhHans: Record<string, string> = {
   "displays.inputCustom": "自定义…",
   "displays.inputCurrent": "{name} · 当前",
   "displays.inputEmpty": "未选择",
+  "displays.inputBackToList": "回到列表",
 
   // The devices table.
   "devices.title": "设备",
@@ -277,7 +278,7 @@ const en: Record<string, string> = {
   "displays.inputHint": "The DDC input source to switch to when that Mac owns the screen",
   "displays.readTitle": "Read this display's current input source",
   "displays.readBusy": "Asking the display…",
-  "displays.read": "Read",
+  "displays.readLong": "Read this Mac's input",
   "displays.reading": "…",
   "displays.add": "＋ Add a display",
   "displays.scan": "Scan displays",
@@ -290,6 +291,7 @@ const en: Record<string, string> = {
   "displays.inputCustom": "Custom…",
   "displays.inputCurrent": "{name} · current",
   "displays.inputEmpty": "Not set",
+  "displays.inputBackToList": "Back to the list",
 
   "devices.title": "Devices",
   "devices.transport": "Link",
