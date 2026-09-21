@@ -284,8 +284,14 @@ fn apply_autostart(app: &AppHandle, enabled: bool) -> bool {
 /// When the user grants it, the core is told to reload so it republishes
 /// `Status` with `input_monitoring: true` — otherwise the tray icon would sit
 /// in its attention state until something else happened to trigger a reload.
+///
+/// A Mac with no config file is the one machine this skips. There the wizard is
+/// about to open, and its first step is this same permission with a screen
+/// saying what it is for; asking here would put the system dialog on screen
+/// first, with nothing behind it to explain itself, and leave that step with
+/// nothing to say but "granted".
 fn prompt_for_input_monitoring(core: CoreHandle) {
-    if permissions::input_monitoring_granted() {
+    if permissions::input_monitoring_granted() || !paths::config_path().exists() {
         return;
     }
     tauri::async_runtime::spawn(async move {

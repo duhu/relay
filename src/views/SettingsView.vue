@@ -61,9 +61,10 @@ const SCHEMA_VERSION = 1;
  * run (`timing` from the spec's example config, `options` from the serde
  * defaults of `relay_core::config::Options`).
  *
- * `this_host` is 255, the slot no host can declare — "not chosen yet", the same
- * sentinel the first-run seed carried. It fails validation on purpose: an empty
- * config is not savable, and the backend says what is missing.
+ * `this_host` is 255: a slot number no host row can ever carry, because a
+ * channel is 1–3 in this form and 0–2 on disk, so it reads as "not chosen yet"
+ * and cannot be mistaken for a machine. It fails validation on purpose — an
+ * empty config is not savable, and the backend says what is missing.
  */
 function emptyConfig(): Config {
   return {
@@ -616,8 +617,16 @@ async function exportConfig() {
  *
  * `?import` puts the wizard straight on its import screen: the user who
  * pressed「导入配置」has already answered the fork it opens with.
+ *
+ * The hash change unmounts this view, and coming back remounts it from the
+ * file — so anything typed and not saved is gone. This window deliberately
+ * keeps unsaved edits across a hide and a show, so losing them to a button is
+ * worth one question first. `window.confirm` is the whole modal this window
+ * has, and it is enough for a yes-or-no.
  */
 function openWizard(at?: "import") {
+  const edited = JSON.stringify(cfg.value) !== baseline.value;
+  if (edited && !window.confirm(t("transfer.confirmDiscard"))) return;
   window.location.hash = at ? `#/wizard?${at}` : "#/wizard";
 }
 

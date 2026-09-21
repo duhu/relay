@@ -139,11 +139,11 @@ fn rows(status: &Status) -> Vec<Row> {
         rows.push(Row::Separator);
     }
 
-    rows.push(Row::item(
-        MENU_ID_SETTINGS,
-        pick(status, "设置…", "Settings…"),
-        true,
-    ));
+    // The item does the same thing either way — it opens the one window — but
+    // that window renders the wizard, not the settings form, on a Mac with
+    // nothing to run on. Calling it "Settings…" there would send the user
+    // somewhere the click does not go.
+    rows.push(Row::item(MENU_ID_SETTINGS, settings_label(status), true));
     rows.push(Row::item(MENU_ID_LOG, pick(status, "日志…", "Log…"), true));
     rows.push(Row::item(MENU_ID_QUIT, pick(status, "退出", "Quit"), true));
     rows
@@ -222,6 +222,15 @@ fn status_label(status: &Status) -> &str {
     state_label(status)
 }
 
+/// What the window the item opens will actually show.
+fn settings_label(status: &Status) -> &'static str {
+    if status.state == "Unconfigured" {
+        pick(status, "设置向导…", "Set Relay up…")
+    } else {
+        pick(status, "设置…", "Settings…")
+    }
+}
+
 fn state_label(status: &Status) -> &str {
     match status.state.as_str() {
         "Idle" => pick(status, "就绪", "Ready"),
@@ -236,10 +245,11 @@ fn state_label(status: &Status) -> &str {
             "刚切换过，几秒内不响应",
             "Just switched; ignoring triggers for a few seconds",
         ),
+        // Says the name of the item below it, which on this state is the wizard.
         "Unconfigured" => pick(
             status,
-            "未配置，点下面「设置」",
-            "Not configured — open Settings below",
+            "未配置，点下面「设置向导…」",
+            "Not configured — start the setup below",
         ),
         // An unknown state is the core's own word for it, in either language.
         other => other,
@@ -385,9 +395,11 @@ mod tests {
         assert_eq!(
             rows(&status("Unconfigured", Vec::new())),
             vec![
-                Row::item(MENU_ID_STATUS, "状态：未配置，点下面「设置」", false),
+                Row::item(MENU_ID_STATUS, "状态：未配置，点下面「设置向导…」", false),
                 Row::Separator,
-                Row::item(MENU_ID_SETTINGS, "设置…", true),
+                // The item names the wizard, which is what this window shows
+                // on a Mac that has nothing to run on.
+                Row::item(MENU_ID_SETTINGS, "设置向导…", true),
                 Row::item(MENU_ID_LOG, "日志…", true),
                 Row::item(MENU_ID_QUIT, "退出", true),
             ]
@@ -401,11 +413,11 @@ mod tests {
             vec![
                 Row::item(
                     MENU_ID_STATUS,
-                    "Status: Not configured — open Settings below",
+                    "Status: Not configured — start the setup below",
                     false
                 ),
                 Row::Separator,
-                Row::item(MENU_ID_SETTINGS, "Settings…", true),
+                Row::item(MENU_ID_SETTINGS, "Set Relay up…", true),
                 Row::item(MENU_ID_LOG, "Log…", true),
                 Row::item(MENU_ID_QUIT, "Quit", true),
             ]
@@ -489,7 +501,7 @@ mod tests {
 
         assert_eq!(
             rows(&neither)[0],
-            Row::item(MENU_ID_STATUS, "状态：未配置，点下面「设置」", false)
+            Row::item(MENU_ID_STATUS, "状态：未配置，点下面「设置向导…」", false)
         );
     }
 

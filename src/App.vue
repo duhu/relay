@@ -60,6 +60,19 @@ onUnmounted(() => window.removeEventListener("hashchange", follow));
 const STATUS_TIMEOUT_MS = 4000;
 
 /**
+ * What language to speak when the status never answered, which is exactly the
+ * path the wizard appears on — so without this a first run on an English Mac
+ * would come up in Chinese, the dictionary's fallback.
+ *
+ * The rule is `tag_language` in `crates/relay-core/src/config.rs`, spelled the
+ * same way here: anything Chinese, in any script or region, is the Simplified
+ * dictionary, and everything else is English.
+ */
+function systemLanguage(): string {
+  return (navigator.language ?? "").trim().toLowerCase().startsWith("zh") ? "zh-Hans" : "en";
+}
+
+/**
  * Asks the core once whether this machine is configured at all.
  *
  * Unconfigured is exactly what the tray means by it: the config did not load,
@@ -85,6 +98,9 @@ async function decide() {
       status.this_host === null ||
       !status.hosts.some(([index]) => index === status.this_host);
   } catch {
+    // No status means no resolved language either; the system's own preference
+    // is the best guess left.
+    setLanguage(systemLanguage());
     needsWizard.value = true;
   }
 }

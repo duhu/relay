@@ -35,6 +35,12 @@ const PRIVACY_PANE_URL: &str =
 const SAME_FILE: &str =
     "this is the config Relay is using; export it to another folder or under another name";
 
+/// What an export from a Mac that has no config file is told. The Advanced tab
+/// is reachable on the blank form, so the button is there before there is
+/// anything behind it, and `fs::copy` would otherwise answer with the operating
+/// system's "No such file or directory (os error 2)".
+const NOTHING_TO_EXPORT: &str = "this Mac has no config yet; set it up and save it, then export it";
+
 /// One currently connected HID device, as the settings window's device picker
 /// shows it. `id` is the `vid:pid` form `DeviceId` uses.
 #[derive(Clone, Debug, Serialize)]
@@ -169,6 +175,9 @@ pub fn export_config(path: String) -> Result<(), String> {
 /// The body of [`export_config`] against an explicit source, so the guard below
 /// can be tested without touching the real config file.
 fn export_config_to(source: &Path, dest: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Err(NOTHING_TO_EXPORT.to_string());
+    }
     // `fs::copy` onto its own source truncates it to nothing and still reports
     // success, so the one destination we must refuse is the file we are reading.
     // Paths cannot settle this — a symlink, a hard link and a case-different
@@ -436,6 +445,19 @@ mod tests {
         // The refusal is incidental; what matters is that the config is still
         // there. `fs::copy` would have left it at zero bytes.
         assert_eq!(fs::read(&path).expect("read"), before);
+    }
+
+    #[test]
+    fn exporting_with_no_config_file_says_so_in_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("config.json");
+        let dest = dir.path().join("relay-config.json");
+
+        let said = export_config_to(&missing, &dest).expect_err("nothing to export");
+
+        assert_eq!(said, NOTHING_TO_EXPORT);
+        // And no half-written destination was left behind for it.
+        assert!(!dest.exists());
     }
 
     /// Writes `cfg` to `path` as the file a user would have picked — plain

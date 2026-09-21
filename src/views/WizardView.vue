@@ -142,6 +142,11 @@ const loadingSources = ref(false);
 /** Hosts whose cell the user switched from the picker to a typed code. */
 const typed = ref<Set<number>>(new Set());
 const readingInput = ref(false);
+/**
+ * The channel the display read was written under, so the step can tell that
+ * this Mac has moved since. Nothing else notices: this screen never rescans.
+ */
+const readChannel = ref<number | null>(null);
 
 // --- what the wizard never asks about --------------------------------------
 
@@ -154,6 +159,15 @@ const timing = ref({ ...DEFAULT_TIMING });
 const hotkeys = ref<Record<string, string>>({});
 const options = ref<Options>({ ...DEFAULT_OPTIONS });
 
+/**
+ * The machines the live config declares, on a rerun. Empty on a first run.
+ *
+ * Unlike anything the wizard can work out for itself, these channels are known
+ * to be paired: a config that ran named them, and the machines step fills its
+ * table from here rather than guessing.
+ */
+const liveHosts = ref<HostRow[]>([]);
+
 /** Keeps the three above from whatever is on disk, when anything is. */
 async function keepUnasked() {
   try {
@@ -161,6 +175,7 @@ async function keepUnasked() {
     timing.value = { ...cfg.timing };
     hotkeys.value = { ...cfg.hotkeys };
     options.value = { ...cfg.options };
+    liveHosts.value = cfg.hosts.map((host) => ({ index: host.index, name: host.name }));
   } catch {
     /* nothing on disk to keep: this is a first run, and the defaults stand */
   }
@@ -389,19 +404,29 @@ const deviceChannel = computed(() => {
   return channelPick.value;
 });
 
-/** The scan found nothing to pick, so the step may be skipped past. */
-const noDevices = computed(() => found.value !== null && found.value.length === 0);
-
 // --- step 3: the machines --------------------------------------------------
 
 /**
- * Fills the table in from what the keyboard reported, the first time only:
- * coming back from the display step must not throw away a typed name.
+ * Fills the table in, the first time only: coming back from the display step
+ * must not throw away a typed name.
  *
- * The mark on "This Mac" is the exception. Going back and choosing another
- * keyboard, or another channel for the pair, changes which channel this Mac is
- * on, and the table would otherwise keep pointing at the old row while the
- * previous screen says something else.
+ * Only two things here are known rather than guessed, and the table holds
+ * nothing else. On a first run it is the channel the devices themselves
+ * reported — this Mac's — and the second row is left blank for the user to
+ * name, because nothing on this machine can tell which other Easy-Switch slots
+ * anybody ever paired. A device's `host_count` cannot: it says how many slots
+ * the keyboard *has*, which is three on every one of them, and a row built from
+ * it would declare a slot that may be empty. Declaring it is what makes it
+ * clickable — the tray offers a "Switch to …" for every host the config names —
+ * and switching to an unpaired slot drops the device off this Mac for good.
+ *
+ * On a rerun the live config's hosts are the table instead: a config that ran
+ * named channels that work.
+ *
+ * The mark on "This Mac" is the exception to "the first time only". Going back
+ * and choosing another keyboard, or another channel for the pair, changes which
+ * channel this Mac is on, and the table would otherwise keep pointing at the
+ * old row while the previous screen says something else.
  */
 function enterMachines() {
   const channel = deviceChannel.value ?? 0;
@@ -410,15 +435,16 @@ function enterMachines() {
     if (at !== -1) thisRow.value = at;
     return;
   }
-  const reported = Math.max(...chosenDevices.value.map((device) => device.host_count), 2);
-  // Three is as far as HID++ Easy-Switch goes, and a fourth row would only
-  // repeat the third. A channel beyond the reported count still needs a row.
-  const count = Math.min(Math.max(reported, channel + 1), 3);
-  hostRows.value = Array.from({ length: count }, (_, i) => ({
-    index: i,
-    name: t("hosts.newName", { channel: i + 1 }),
-  }));
-  thisRow.value = Math.min(channel, count - 1);
+  if (liveHosts.value.length > 0) {
+    hostRows.value = liveHosts.value.map((host) => ({ ...host }));
+  } else {
+    hostRows.value = [{ index: channel, name: t("hosts.newName", { channel: channel + 1 }) }];
+    // A second row, because one machine is not a setup — blank, so the footer
+    // holds the step until the user has said what it is.
+    hostRows.value.push({ index: freeChannel() ?? channel, name: "" });
+  }
+  const at = hostRows.value.findIndex((row) => row.index === channel);
+  thisRow.value = at === -1 ? 0 : at;
   leaveRow.value = null;
 }
 
@@ -444,7 +470,10 @@ const canAddMachine = computed(() => hostRows.value.length < 3 && freeChannel() 
 function addMachine() {
   const free = freeChannel();
   if (free === null) return;
-  hostRows.value.push({ index: free, name: t("hosts.newName", { channel: free + 1 }) });
+  // Blank, like the second row: a placeholder name would let a row nobody has
+  // looked at satisfy the step, and a row nobody looked at is how an unpaired
+  // channel gets declared.
+  hostRows.value.push({ index: free, name: "" });
 }
 
 function removeMachine(position: number) {
@@ -490,7 +519,17 @@ async function enterDisplays() {
   // `typed` is keyed by channel too, and a cell left in the typed state under a
   // channel no row has any more would decide the layout of a cell that is gone.
   typed.value = new Set([...typed.value].filter((host) => live.has(host)));
-  if (displays.value === null) await scanDisplays();
+  if (displays.value === null) {
+    await scanDisplays();
+    return;
+  }
+  // Coming back with this Mac on another channel left its cell empty — the code
+  // went out with the key it was under, two lines up — and this step does not
+  // rescan, so without this the user would find out at Finish.
+  const here = hostRows.value[thisRow.value];
+  if (chosenUuid.value !== null && here && readChannel.value !== null && readChannel.value !== here.index) {
+    await readThisInput();
+  }
 }
 
 async function scanDisplays() {
@@ -521,6 +560,7 @@ async function chooseDisplay(uuid: string | null) {
   inputs.value = {};
   sources.value = [];
   typed.value = new Set();
+  readChannel.value = null;
   if (uuid === null) return;
   // Both calls take the display they were started for, and drop what they got
   // if the choice moved on meanwhile: the two answers on this screen have to
@@ -548,7 +588,10 @@ async function readThisInput(uuid: string | null = chosenUuid.value) {
       return;
     }
     const row = hostRows.value[thisRow.value];
-    if (row) inputs.value[String(row.index)] = code;
+    if (row) {
+      inputs.value[String(row.index)] = code;
+      readChannel.value = row.index;
+    }
   } catch (err) {
     if (chosenUuid.value !== uuid) return;
     error.value = t("error.readInput", { detail: String(err) });
@@ -633,7 +676,19 @@ function setInput(host: number, raw: string) {
 function buildConfig(): Config {
   const rows = hostRows.value;
   const here = rows[thisRow.value];
-  const exit = leaveRow.value === null ? null : (rows[leaveRow.value]?.index ?? null);
+  // `Config::adopt` — the other writer of a Relay config, on the import path —
+  // fills the exit in even with two machines, where it is simply the other one.
+  // `plan::target_for_leave` infers the same thing from a null, so the two
+  // behave alike, but the settings window's "Leaves to" column reads the field:
+  // leaving it out here would show a blank on a config this wizard built and a
+  // name on an imported one, for the same pair of Macs.
+  const others = rows.filter((_, position) => position !== thisRow.value);
+  const exit =
+    leaveRow.value !== null
+      ? (rows[leaveRow.value]?.index ?? null)
+      : others.length === 1
+        ? others[0].index
+        : null;
   const display = chosenDisplay.value;
   const byHost: Record<string, number> = {};
   for (const row of rows) {
@@ -650,9 +705,9 @@ function buildConfig(): Config {
       serial: device.serial,
       is_trigger: device.id === triggerId.value,
       follow: device.id === followId.value,
-      // Only a trigger ever leaves this Mac on its own, and only three-machine
-      // setups have to say where to.
-      leave_to: device.id === triggerId.value && needsLeaveTo.value ? exit : null,
+      // Only a trigger ever leaves this Mac on its own; a follower is sent
+      // wherever the switch is going and has no exit of its own.
+      leave_to: device.id === triggerId.value ? exit : null,
     }));
   return {
     schema_version: SCHEMA_VERSION,
@@ -757,10 +812,19 @@ const canNext = computed(() => {
       return fileLeaveTo.value !== null;
     case "permission":
       return granted.value;
+    // A scan that found nothing used to let the step through, which walked the
+    // user into a Finish that can never succeed: `validate()` wants one trigger
+    // and one follower, and there are none to pick. The two honest ways on are
+    // the rescan link and the way out into the settings form, and the sentence
+    // under the empty table names both.
     case "devices":
-      return noDevices.value || (triggerId.value !== "" && followId.value !== "" && deviceChannel.value !== null);
+      return triggerId.value !== "" && followId.value !== "" && deviceChannel.value !== null;
     case "machines":
-      return hostRows.value.length >= 2 && (!needsLeaveTo.value || leaveRow.value !== null);
+      return (
+        hostRows.value.length >= 2 &&
+        hostRows.value.every((row) => row.name.trim() !== "") &&
+        (!needsLeaveTo.value || leaveRow.value !== null)
+      );
     case "displays":
       return true;
     default:
@@ -773,7 +837,11 @@ const footNote = computed(() => {
   if (screen.value === "devices" && !canNext.value) {
     return channelOptions.value.length > 1 ? t("wizard.pickChannel") : t("wizard.pickDevices");
   }
-  if (screen.value === "machines" && !canNext.value) return t("wizard.needLeaveTo");
+  if (screen.value === "machines" && !canNext.value) {
+    return hostRows.value.some((row) => row.name.trim() === "")
+      ? t("wizard.needName")
+      : t("wizard.needLeaveTo");
+  }
   if (screen.value === "permission" && !granted.value) return t("wizard.permissionNeeded");
   if (screen.value === "importFile" && fileCfg.value === null) return t("wizard.importNoFile");
   return "";
@@ -974,6 +1042,9 @@ async function next() {
       <!-- Step 3: the machines sharing the keyboard. -->
       <section v-if="screen === 'machines'" class="card">
         <p class="sub">{{ t("wizard.machinesHint") }}</p>
+        <!-- The one thing this screen cannot check for the user: pairing lives
+             in the keyboard, not on this Mac. -->
+        <p class="sub">{{ t("wizard.machinesPaired") }}</p>
         <table>
           <thead>
             <tr>

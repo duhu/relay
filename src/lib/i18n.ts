@@ -177,6 +177,7 @@ const zhHans: Record<string, string> = {
   "transfer.export": "导出配置",
   "transfer.import": "导入配置",
   "transfer.rerun": "重新运行向导",
+  "transfer.confirmDiscard": "这里有还没保存的改动，向导会顶掉这个表单，改动会丢。要继续吗？",
 
   // The wizard: the first screen a Mac that has never been configured shows,
   // and the fast path for a second one. Same words as the settings window —
@@ -216,7 +217,7 @@ const zhHans: Record<string, string> = {
   "wizard.devicesTitle": "键盘和鼠标",
   "wizard.devicesHint": "各选一个：「触发」留在本机负责发现切换，「跟随」跟着画面走。",
   "wizard.devicesNone":
-    "没扫到可切换的设备。这一步可以往下走，但 Relay 要有一个键盘和一个鼠标才存得下配置：把键鼠切回本机再扫一次，或者自己在设置里填。",
+    "没扫到可切换的设备。没有一个「触发」和一个「跟随」，Relay 存不下配置，这一步也就过不去：把键鼠切回本机，点下面的「扫描设备」再扫一次；或者从窗口右上角离开向导，到设置里自己填。",
   "wizard.thisChannel": "这台是通道 {channel}",
   "wizard.channelDisagree": "两个设备说的通道不一样，选一个：",
   "wizard.pickDevices": "触发和跟随各选一个",
@@ -224,6 +225,8 @@ const zhHans: Record<string, string> = {
 
   "wizard.machinesTitle": "共用这套键鼠的机器",
   "wizard.machinesHint": "名字随便起；通道号就是键鼠上的 Easy-Switch 按键。",
+  "wizard.machinesPaired":
+    "只填真的和这套键鼠配对过的通道：配没配对 Relay 看不出来，切到没配对的通道，设备会断开而且回不来。",
 
   "wizard.displaysTitle": "共用的显示器",
   "wizard.displaysHint": "选这几台机器轮流用的那台显示器。",
@@ -243,6 +246,7 @@ const zhHans: Record<string, string> = {
   // user gets a sentence to act on instead of an English `ConfigError`.
   "wizard.needDevices": "Relay 需要一个「触发」设备和一个「跟随」设备，回到「键盘和鼠标」各选一个。",
   "wizard.duplicateChannel": "两台机器用了同一个通道号，每台各占一个。",
+  "wizard.needName": "每台机器都要有名字",
   "wizard.needLeaveTo": "有三台机器，先选离开本机时默认送去哪一台。",
   "wizard.needInput": "还没填「{name}」在这台显示器上的输入源。",
   "wizard.duplicateInput": "两台机器都填了输入源 {code}；一个输入源只能对上一台机器。",
@@ -432,6 +436,8 @@ const en: Record<string, string> = {
   "transfer.export": "Export the config",
   "transfer.import": "Import a config",
   "transfer.rerun": "Run the wizard again",
+  "transfer.confirmDiscard":
+    "There are unsaved changes here. The wizard takes this form's place, and they will be lost. Go on?",
 
   "wizard.title": "Set up Relay",
   "wizard.stepOf": "Step {step} of {total}",
@@ -473,7 +479,7 @@ const en: Record<string, string> = {
   "wizard.devicesHint":
     "One of each: the trigger stays on this Mac and notices the switch, the follower goes with the screen.",
   "wizard.devicesNone":
-    "No switchable device found. You can go on from here, but Relay needs one keyboard and one mouse before it can save: bring them back to this Mac and scan again, or set it up by hand.",
+    "No switchable device found. Relay cannot save a config without one trigger and one follower, so there is no way past this step: bring the keyboard and the mouse back to this Mac and press “Scan devices” below, or leave the wizard at the top of the window and fill them in by hand in Settings.",
   "wizard.thisChannel": "This Mac is channel {channel}",
   "wizard.channelDisagree": "The two devices report different channels; pick one:",
   "wizard.pickDevices": "Pick one trigger and one follower",
@@ -482,6 +488,8 @@ const en: Record<string, string> = {
   "wizard.machinesTitle": "The Macs sharing this keyboard",
   "wizard.machinesHint":
     "Any name will do; the channel is the Easy-Switch key on the keyboard and the mouse.",
+  "wizard.machinesPaired":
+    "List only channels this keyboard is really paired with: Relay cannot see which ones are, and switching to a channel nobody paired drops the devices for good.",
 
   "wizard.displaysTitle": "The shared display",
   "wizard.displaysHint": "The one display these Macs take turns on.",
@@ -501,6 +509,7 @@ const en: Record<string, string> = {
   "wizard.needDevices":
     "Relay needs one trigger device and one follower; go back to “Keyboard and mouse” and pick one of each.",
   "wizard.duplicateChannel": "Two Macs claim the same channel; each one needs its own.",
+  "wizard.needName": "Every Mac needs a name",
   "wizard.needLeaveTo": "With three Macs, pick where a switch away from this one goes.",
   "wizard.needInput": "“{name}” has no input source on this display yet.",
   "wizard.duplicateInput":
