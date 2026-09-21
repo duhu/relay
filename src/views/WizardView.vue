@@ -10,20 +10,34 @@
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { computed, onMounted, ref, watchEffect } from "vue";
+import { computed, onMounted, ref, watch, watchEffect } from "vue";
 
 import { t } from "../lib/i18n";
 import * as ipc from "../lib/ipc";
-import type { Config, DiscoveredDevice, DiscoveredDisplay, InputSource } from "../lib/ipc";
+import type {
+  Config,
+  DiscoveredDevice,
+  DiscoveredDisplay,
+  InputSource,
+  Options,
+} from "../lib/ipc";
 
 const props = defineProps<{
   /** Skip the fork and land straight on the import screen. */
   startAtImport?: boolean;
+  /**
+   * Whether the wizard is the only thing this window can show — a machine that
+   * is not configured — rather than something the user opened from Advanced.
+   * It changes what the way out is called, because there is nothing to cancel
+   * back to on a machine that has no settings to return to.
+   */
+  onlyView?: boolean;
 }>();
 
 // The wizard has nothing to hand back: what it built is on disk, and the
-// settings view reads the file itself.
-const emit = defineEmits<{ (event: "done"): void }>();
+// settings view reads the file itself. `exit` is the other way out — the user
+// leaving the wizard without it having written anything.
+const emit = defineEmits<{ (event: "done"): void; (event: "exit"): void }>();
 
 type Screen =
   | "choice"
@@ -66,11 +80,11 @@ const BACK_TO: Partial<Record<Screen, Screen>> = {
 const DEFAULT_TIMING = { debounce_ms: 800, cooldown_ms: 5000, ddc_retries: 3 };
 
 /** The serde defaults of `relay_core::config::Options`; the wizard never asks. */
-const DEFAULT_OPTIONS = {
+const DEFAULT_OPTIONS: Options = {
   switch_back_on_reconnect: true,
   pull_on_arrival: true,
   launch_at_login: true,
-  language: "auto" as const,
+  language: "auto",
 };
 
 /** Mirrors `SCHEMA_VERSION` in `crates/relay-core/src/config.rs`. */
@@ -129,6 +143,29 @@ const loadingSources = ref(false);
 const typed = ref<Set<number>>(new Set());
 const readingInput = ref(false);
 
+// --- what the wizard never asks about --------------------------------------
+
+// `timing`, `hotkeys` and `options` are the wizard's blind spot: no screen here
+// asks about them, so it must not write over them. On a first run they are the
+// defaults; on a rerun from Advanced they are whatever the live config holds,
+// or a tuned debounce, a set of global hotkeys and an explicit language would
+// quietly go back to the defaults.
+const timing = ref({ ...DEFAULT_TIMING });
+const hotkeys = ref<Record<string, string>>({});
+const options = ref<Options>({ ...DEFAULT_OPTIONS });
+
+/** Keeps the three above from whatever is on disk, when anything is. */
+async function keepUnasked() {
+  try {
+    const cfg = await ipc.getConfig();
+    timing.value = { ...cfg.timing };
+    hotkeys.value = { ...cfg.hotkeys };
+    options.value = { ...cfg.options };
+  } catch {
+    /* nothing on disk to keep: this is a first run, and the defaults stand */
+  }
+}
+
 // --- the last screen -------------------------------------------------------
 
 /** Whether the done screen offers to export — only the path that built a file. */
@@ -148,9 +185,16 @@ watchEffect(() => {
 });
 
 onMounted(() => {
+  void keepUnasked();
   // The import screen can be the very first one, via `#/wizard?import`.
   if (screen.value === "importFile") void enterImportFile();
 });
+
+/**
+ * The way out of the wizard, on every screen. With nothing to go back to it
+ * says where it leads instead — the settings form, filled in by hand.
+ */
+const exitLabel = computed(() => (props.onlyView ? t("wizard.byHand") : t("wizard.cancel")));
 
 /** The step counter, or `null` on a screen that is not one of the four. */
 const stepNumber = computed(() => {
@@ -353,10 +397,19 @@ const noDevices = computed(() => found.value !== null && found.value.length === 
 /**
  * Fills the table in from what the keyboard reported, the first time only:
  * coming back from the display step must not throw away a typed name.
+ *
+ * The mark on "This Mac" is the exception. Going back and choosing another
+ * keyboard, or another channel for the pair, changes which channel this Mac is
+ * on, and the table would otherwise keep pointing at the old row while the
+ * previous screen says something else.
  */
 function enterMachines() {
-  if (hostRows.value.length > 0) return;
   const channel = deviceChannel.value ?? 0;
+  if (hostRows.value.length > 0) {
+    const at = hostRows.value.findIndex((row) => row.index === channel);
+    if (at !== -1) thisRow.value = at;
+    return;
+  }
   const reported = Math.max(...chosenDevices.value.map((device) => device.host_count), 2);
   // Three is as far as HID++ Easy-Switch goes, and a fourth row would only
   // repeat the third. A channel beyond the reported count still needs a row.
@@ -416,15 +469,27 @@ const leaveOptions = computed(() =>
   hostRows.value.map((row, position) => ({ row, position })).filter((entry) => entry.position !== thisRow.value),
 );
 
+// A machine cannot leave to itself, and the row list above drops the exit's
+// radio the moment it becomes this Mac — so the answer has to go with it, or
+// the footer would still say the step is done and the backend would refuse the
+// save on the screen after this one. The import path drops `fileLeaveTo` the
+// same way when the user changes which machine they are.
+watch(thisRow, (position) => {
+  if (leaveRow.value === position) leaveRow.value = null;
+});
+
 // --- step 4: the display ---------------------------------------------------
 
 async function enterDisplays() {
   // A channel edited on the previous step leaves a code behind under the old
   // key, which would travel into the config as a host nothing declares.
-  const live = new Set(hostRows.value.map((row) => String(row.index)));
+  const live = new Set(hostRows.value.map((row) => row.index));
   for (const key of Object.keys(inputs.value)) {
-    if (!live.has(key)) delete inputs.value[key];
+    if (!live.has(Number(key))) delete inputs.value[key];
   }
+  // `typed` is keyed by channel too, and a cell left in the typed state under a
+  // channel no row has any more would decide the layout of a cell that is gone.
+  typed.value = new Set([...typed.value].filter((host) => live.has(host)));
   if (displays.value === null) await scanDisplays();
 }
 
@@ -435,8 +500,9 @@ async function scanDisplays() {
     const list = await ipc.listDisplays();
     displays.value = list;
     // One display is the whole point of the product; asking which one would be
-    // a question with a single answer.
-    if (chosenUuid.value === null && list.length > 0) await chooseDisplay(list[0].edid_uuid);
+    // a question with a single answer. With two there is a real question, and
+    // guessing would also spend a multi-second read on the wrong monitor.
+    if (chosenUuid.value === null && list.length === 1) await chooseDisplay(list[0].edid_uuid);
   } catch (err) {
     displays.value = [];
     error.value = t("error.scanDisplays", { detail: String(err) });
@@ -456,8 +522,12 @@ async function chooseDisplay(uuid: string | null) {
   sources.value = [];
   typed.value = new Set();
   if (uuid === null) return;
-  await readThisInput();
-  await loadSources();
+  // Both calls take the display they were started for, and drop what they got
+  // if the choice moved on meanwhile: the two answers on this screen have to
+  // come from the same monitor.
+  await readThisInput(uuid);
+  if (chosenUuid.value !== uuid) return;
+  await loadSources(uuid);
 }
 
 const chosenDisplay = computed(
@@ -465,12 +535,14 @@ const chosenDisplay = computed(
 );
 
 /** This Mac's own row: the monitor answers over this Mac's cable, nobody else's. */
-async function readThisInput() {
-  const uuid = chosenUuid.value;
+async function readThisInput(uuid: string | null = chosenUuid.value) {
   if (uuid === null || readingInput.value || loadingSources.value) return;
   readingInput.value = true;
   try {
     const code = await ipc.readDisplayInput(uuid);
+    // A read takes seconds. A display chosen in the meantime owns the table
+    // now, and this code belongs to the one the user left.
+    if (chosenUuid.value !== uuid) return;
     if (code === null) {
       error.value = t("displays.readUnsupported");
       return;
@@ -478,6 +550,7 @@ async function readThisInput() {
     const row = hostRows.value[thisRow.value];
     if (row) inputs.value[String(row.index)] = code;
   } catch (err) {
+    if (chosenUuid.value !== uuid) return;
     error.value = t("error.readInput", { detail: String(err) });
   } finally {
     readingInput.value = false;
@@ -489,18 +562,24 @@ async function readThisInput() {
  * answer yields an empty list, and every cell falls back to a number box —
  * which is what the settings window does with the same silence.
  */
-async function loadSources() {
-  const uuid = chosenUuid.value;
+async function loadSources(uuid: string | null = chosenUuid.value) {
   if (uuid === null || loadingSources.value) return;
   loadingSources.value = true;
   try {
-    sources.value = await ipc.listInputSources(uuid);
+    const list = await ipc.listInputSources(uuid);
+    // As above: the list of a display the user is no longer on would put that
+    // monitor's names in front of this one's codes.
+    if (chosenUuid.value !== uuid) return;
+    sources.value = list;
   } catch {
-    sources.value = [];
+    if (chosenUuid.value === uuid) sources.value = [];
   } finally {
     loadingSources.value = false;
   }
 }
+
+/** A display's answers are on their way; the radios wait for them. */
+const displayBusy = computed(() => readingInput.value || loadingSources.value);
 
 /** Whether this host's cell shows the picker rather than the number box. */
 function picks(host: number): boolean {
@@ -548,8 +627,8 @@ function setInput(host: number, raw: string) {
 /**
  * The config the four steps add up to.
  *
- * `timing`, `hotkeys` and `options` are the defaults the spec's example config
- * carries: the wizard does not ask about them, and the advanced tab does.
+ * `timing`, `hotkeys` and `options` come from `keepUnasked()`, not from this
+ * screen: the wizard never asks about them, and the advanced tab does.
  */
 function buildConfig(): Config {
   const rows = hostRows.value;
@@ -583,9 +662,9 @@ function buildConfig(): Config {
       ? [{ edid_uuid: display.edid_uuid, name: display.name, input_by_host: byHost }]
       : [],
     devices,
-    timing: { ...DEFAULT_TIMING },
-    hotkeys: {},
-    options: { ...DEFAULT_OPTIONS },
+    timing: { ...timing.value },
+    hotkeys: { ...hotkeys.value },
+    options: { ...options.value },
   };
 }
 
@@ -740,8 +819,15 @@ async function next() {
     <header>
       <div class="title">
         <b>{{ t(TITLE_KEYS[screen]) }}</b>
-        <span v-if="stepNumber" class="muted step">
-          {{ t("wizard.stepOf", { step: stepNumber, total: FIRST_RUN.length }) }}
+        <span class="aside">
+          <span v-if="stepNumber" class="muted step">
+            {{ t("wizard.stepOf", { step: stepNumber, total: FIRST_RUN.length }) }}
+          </span>
+          <!-- The way out, on every screen the wizard can be stuck on. The done
+               screen has its own, and it is the one that belongs there. -->
+          <button v-if="screen !== 'done'" class="link" @click="emit('exit')">
+            {{ exitLabel }}
+          </button>
         </span>
       </div>
     </header>
@@ -949,9 +1035,12 @@ async function next() {
           </p>
           <label v-for="display in displays ?? []" :key="display.edid_uuid" class="row found">
             <span>
+              <!-- Locked while this display is being asked its two questions:
+                   a switch mid-read would mix the two monitors' answers. -->
               <input
                 type="radio"
                 :checked="chosenUuid === display.edid_uuid"
+                :disabled="displayBusy"
                 @change="chooseDisplay(display.edid_uuid)"
               />
               {{ display.name }}
@@ -962,7 +1051,12 @@ async function next() {
           </label>
           <label v-if="displays && displays.length > 0" class="row">
             <span>
-              <input type="radio" :checked="chosenUuid === null" @change="chooseDisplay(null)" />
+              <input
+                type="radio"
+                :checked="chosenUuid === null"
+                :disabled="displayBusy"
+                @change="chooseDisplay(null)"
+              />
               {{ t("wizard.displaysSkip") }}
             </span>
           </label>
@@ -1026,7 +1120,7 @@ async function next() {
           </table>
           <!-- Only this Mac's row can be read: DDC reaches the display over
                this Mac's own cable, so the answer is this host's code. -->
-          <button class="link" :disabled="readingInput || loadingSources" @click="readThisInput">
+          <button class="link" :disabled="displayBusy" @click="readThisInput()">
             {{ readingInput ? t("wizard.reading") : t("displays.readLong") }}
           </button>
         </template>
@@ -1086,6 +1180,14 @@ header {
 .title b {
   font-size: 15px;
   font-weight: 600;
+}
+
+/* The step counter and the way out, on one line opposite the title. */
+.aside {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .step {
@@ -1173,17 +1275,16 @@ button.big .muted {
   font-size: 11px;
 }
 
-/* The input code and the buttons that stand beside it. */
+/* The input code and the buttons that stand beside it — the same row the
+   settings window builds, so the number box and the ↩ button line up. */
 .input-cell {
+  display: flex;
+  align-items: center;
   gap: 4px;
 }
 
 .input-cell select {
   width: 170px;
-}
-
-.input-cell .code {
-  width: 64px;
 }
 
 footer {

@@ -186,6 +186,10 @@ const zhHans: Record<string, string> = {
   "wizard.back": "上一步",
   "wizard.next": "下一步",
   "wizard.finish": "完成",
+  // 两个都是「离开向导」。从设置里点进来的有地方可退，第一次开机的没有，
+  // 所以后者说的是去哪，不是退回哪。
+  "wizard.cancel": "取消",
+  "wizard.byHand": "我自己在设置里填",
 
   "wizard.choiceTitle": "开始之前",
   "wizard.choiceHint": "这是第一台配 Relay 的 Mac，还是已经有一台配好了？",
@@ -207,12 +211,12 @@ const zhHans: Record<string, string> = {
   "wizard.permissionTitle": "输入监控授权",
   "wizard.permissionHint": "没有这项授权，Relay 读不到键鼠的通道，也切不了。",
   "wizard.permissionRecheck": "重新检查",
-  "wizard.permissionNeeded": "授权到手才能继续",
+  "wizard.permissionNeeded": "拿到这项授权才能继续",
 
   "wizard.devicesTitle": "键盘和鼠标",
   "wizard.devicesHint": "各选一个：「触发」留在本机负责发现切换，「跟随」跟着画面走。",
   "wizard.devicesNone":
-    "没扫到可切换的设备。Relay 至少需要一个触发设备和一个跟随设备，把键鼠切回本机再扫一次。",
+    "没扫到可切换的设备。这一步可以往下走，但 Relay 要有一个键盘和一个鼠标才存得下配置：把键鼠切回本机再扫一次，或者自己在设置里填。",
   "wizard.thisChannel": "这台是通道 {channel}",
   "wizard.channelDisagree": "两个设备说的通道不一样，选一个：",
   "wizard.pickDevices": "触发和跟随各选一个",
@@ -426,6 +430,10 @@ const en: Record<string, string> = {
   "wizard.back": "Back",
   "wizard.next": "Next",
   "wizard.finish": "Finish",
+  // Both leave the wizard. The one opened from Settings has somewhere to go
+  // back to; the one a new Mac starts in has not, so it says where it leads.
+  "wizard.cancel": "Cancel",
+  "wizard.byHand": "Set it up by hand instead",
 
   "wizard.choiceTitle": "Before we start",
   "wizard.choiceHint":
@@ -451,13 +459,13 @@ const en: Record<string, string> = {
   "wizard.permissionHint":
     "Without it Relay cannot read the keyboard's channel, nor change it.",
   "wizard.permissionRecheck": "Check again",
-  "wizard.permissionNeeded": "Granted is how this step ends",
+  "wizard.permissionNeeded": "This step needs the permission before it can go on",
 
   "wizard.devicesTitle": "Keyboard and mouse",
   "wizard.devicesHint":
     "One of each: the trigger stays on this Mac and notices the switch, the follower goes with the screen.",
   "wizard.devicesNone":
-    "No switchable device found. Relay needs one trigger and one follower, so bring the keyboard and mouse back to this Mac and scan again.",
+    "No switchable device found. You can go on from here, but Relay needs one keyboard and one mouse before it can save: bring them back to this Mac and scan again, or set it up by hand.",
   "wizard.thisChannel": "This Mac is channel {channel}",
   "wizard.channelDisagree": "The two devices report different channels; pick one:",
   "wizard.pickDevices": "Pick one trigger and one follower",
