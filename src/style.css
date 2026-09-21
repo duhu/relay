@@ -1,0 +1,285 @@
+/* Hand-written macOS-ish base: system font, 13px, light/dark by preference.
+   The palette and the handful of shared classes below are the settings
+   window's whole design system — no UI library, no icon font, no images. */
+
+:root {
+  color-scheme: light dark;
+  --text: #1d1d1f;
+  --muted: #86868b;
+  /* The window sits on light grey; cards are the white surface on top of it. */
+  --bg: #f6f6f8;
+  --panel: #ffffff;
+  --border: #e6e6ea;
+  /* Text fields keep their own pair, a shade darker than a card's edge. */
+  --field: #ffffff;
+  --fieldline: #d9d9de;
+  /* The track behind the segmented control. */
+  --segbg: #e8e8ec;
+  --accent: #0a84ff;
+  --ok: #1d7a3e;
+  --ok-bg: rgba(52, 199, 89, 0.14);
+  --warn: #b26b00;
+  --bad: #c9372c;
+  --bad-bg: #fdeceb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f5f5f7;
+    --muted: #98989d;
+    --bg: #1c1c1e;
+    --panel: #242426;
+    --border: #343438;
+    --field: #2c2c2e;
+    --fieldline: #48484c;
+    --segbg: #2c2c2e;
+    --accent: #0a84ff;
+    --ok: #63d27a;
+    --ok-bg: rgba(99, 210, 122, 0.16);
+    --warn: #e6a33c;
+    --bad: #ff6961;
+    --bad-bg: #3a2221;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    sans-serif;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  padding: 3px 12px;
+  border: 1px solid var(--fieldline);
+  border-radius: 6px;
+  background: var(--field);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* The small button that lives inside a table cell or at the end of a row. */
+button.mini {
+  font-size: 11px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+/* An action that is not a control of its own: "add a Mac", "scan displays".
+   Borderless so a card's foot stays quiet. */
+button.link {
+  font-size: 12px;
+  padding: 0;
+  margin: 8px 12px 0 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+}
+
+button.link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+input[type="text"],
+input[type="number"],
+select {
+  font: inherit;
+  color: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--fieldline);
+  border-radius: 6px;
+  background: var(--field);
+  width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 6px 6px 0;
+  white-space: nowrap;
+}
+
+td {
+  padding: 4px 6px 4px 0;
+  text-align: left;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+/* A cell holding a code, not prose: keep the field narrow. */
+td.num input {
+  width: 54px;
+}
+
+td.center,
+th.center {
+  text-align: center;
+}
+
+/* The white surface every group of settings sits on. */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.card h2 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* The one sentence a card may keep, when without it the user would get the
+   setting wrong. */
+.card .sub {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* A label on the left, its value or control on the right. */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row .v {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+/* The one line that names this Mac, at the top of the overview. */
+.hero {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.hero b {
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.pill.warn {
+  background: rgba(230, 163, 60, 0.16);
+  color: var(--warn);
+}
+
+.pill.bad {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+/* The tab strip: one segment per panel, the current one raised. */
+.seg {
+  display: flex;
+  background: var(--segbg);
+  border-radius: 8px;
+  padding: 2px;
+  margin-top: 12px;
+}
+
+.seg button {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+}
+
+.seg button.on {
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+  font-weight: 500;
+}
+
+.seg button:hover:not(:disabled) {
+  border-color: transparent;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+/* The status dot in the window header: green ready, amber busy, red needs you. */
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #34c759;
+}
+
+.dot.warn {
+  background: #ff9f0a;
+}
+
+.dot.bad {
+  background: var(--bad);
+}

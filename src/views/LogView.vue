@@ -1,0 +1,142 @@
+<script setup lang="ts">
+// The core's ring buffer, newest last, polled every 2s.
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { nextTick, onMounted, onUnmounted, ref, watchEffect } from "vue";
+
+import { setLanguage, t } from "../lib/i18n";
+import { getLogs, getStatus, type LogEntry } from "../lib/ipc";
+
+const REFRESH_MS = 2000;
+/** How close to the bottom still counts as "following the tail". */
+const STICK_PX = 24;
+
+const entries = ref<LogEntry[]>([]);
+const error = ref("");
+const scroller = ref<HTMLElement | null>(null);
+
+let timer = 0;
+
+// The native title bar is outside the Vue tree, so the window title has to be
+// set from here; `t()` reads the language ref, so this re-runs whenever the
+// language changes while the window is open. `windows.rs` gives the window a
+// neutral title for the moment before this view loads.
+watchEffect(() => {
+  const title = t("log.title");
+  getCurrentWindow()
+    .setTitle(title)
+    .catch(() => {
+      /* a title the window manager refused is not worth showing */
+    });
+});
+
+onMounted(() => {
+  void refresh();
+  timer = window.setInterval(refresh, REFRESH_MS);
+});
+
+onUnmounted(() => window.clearInterval(timer));
+
+async function refresh() {
+  const box = scroller.value;
+  // Keep following the newest line unless the user scrolled up to read.
+  const stick = !box || box.scrollHeight - box.scrollTop - box.clientHeight < STICK_PX;
+  // This window shows no status, but the language lives on it — the same field
+  // the tray reads — so following it here is what keeps this window in step
+  // after the config is saved. A status that will not load leaves the language
+  // as it was.
+  try {
+    setLanguage((await getStatus()).language);
+  } catch {
+    /* empty */
+  }
+  try {
+    entries.value = await getLogs();
+    error.value = "";
+  } catch (err) {
+    error.value = t("log.loadFailed", { detail: String(err) });
+    return;
+  }
+  if (stick) {
+    await nextTick();
+    if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight;
+  }
+}
+
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
+function time(ts_ms: number): string {
+  const at = new Date(ts_ms);
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}.${pad(
+    at.getMilliseconds(),
+    3,
+  )}`;
+}
+</script>
+
+<template>
+  <main ref="scroller">
+    <p v-if="error" class="error">{{ error }}</p>
+    <p v-else-if="entries.length === 0" class="empty">{{ t("log.empty") }}</p>
+    <table v-else>
+      <tbody>
+        <tr v-for="(entry, i) in entries" :key="i">
+          <td class="ts">{{ time(entry.ts_ms) }}</td>
+          <td class="level" :class="entry.level.toLowerCase()">{{ entry.level }}</td>
+          <td class="target">{{ entry.target }}</td>
+          <td class="message">{{ entry.message }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+</template>
+
+<style scoped>
+main {
+  height: 100vh;
+  overflow: auto;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+}
+
+td {
+  padding: 1px 6px 1px 0;
+  border: 0;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ts,
+.target {
+  color: var(--muted);
+}
+
+.level {
+  font-weight: 600;
+}
+
+.level.warn {
+  color: var(--warn);
+}
+
+.level.error {
+  color: var(--bad);
+}
+
+.message {
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error {
+  color: var(--bad);
+}
+
+.empty {
+  color: var(--muted);
+}
+</style>

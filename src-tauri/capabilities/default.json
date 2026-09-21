@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the settings and log windows may use; Relay's own commands need no permission.",
+  "windows": ["settings", "log"],
+  "permissions": ["core:default"]
+}

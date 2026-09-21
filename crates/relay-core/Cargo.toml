@@ -1,0 +1,40 @@
+[package]
+name = "relay-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+notify = "8"
+# The HID backend: enumerate HID++ nodes and open a channel on one.
+openlogi-hid = "=0.8.5"
+# The HID++ protocol itself. Imported as `hidpp`, which is how the crate names
+# its own library target and how every openlogi crate refers to it.
+hidpp = { package = "openlogi-hidpp", version = "=0.8.5" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = "0.3.2"
+objc2-io-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "hid",
+    "hidsystem",
+    # The IOKitLib registry calls the DDC backend walks the IOService plane
+    # with; every one of them is gated on this feature.
+    "libc",
+] }
+
+[dev-dependencies]
+# The scripted HID cassettes the replay backend replays; same pinned release as
+# `openlogi-hid`, which re-exports the backend that consumes them.
+openlogi-fixture = "=0.8.5"
+tempfile = "3"
+# `start_paused` in tests: no real sleeping for the DDC backoff.
+tokio = { version = "1", features = ["test-util"] }

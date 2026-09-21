@@ -1,0 +1,4 @@
+# pnpm reads build-script approvals from here (esbuild ships a prebuilt binary
+# it links in a postinstall script).
+allowBuilds:
+  esbuild: true

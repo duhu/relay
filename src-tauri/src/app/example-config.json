@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "this_host": 255,
+  "hosts": [
+    { "index": 1, "name": "Bam.Work" },
+    { "index": 2, "name": "Bam.Mini" }
+  ],
+  "displays": [
+    {
+      "edid_uuid": "REPLACE-ME",
+      "name": "AOC U2790R3B",
+      "input_by_host": { "1": 17, "2": 18 }
+    }
+  ],
+  "devices": [
+    {
+      "id": "046d:b366",
+      "name": "MX Mechanical",
+      "role": "keyboard",
+      "transport": "ble",
+      "is_trigger": true,
+      "follow": false,
+      "leave_to": null
+    },
+    {
+      "id": "046d:b023",
+      "name": "MX Master 3",
+      "role": "mouse",
+      "transport": "ble",
+      "is_trigger": false,
+      "follow": true,
+      "leave_to": null
+    }
+  ],
+  "timing": { "debounce_ms": 800, "cooldown_ms": 5000, "ddc_retries": 3 },
+  "hotkeys": { "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" },
+  "options": {
+    "switch_back_on_reconnect": true,
+    "pull_on_arrival": true,
+    "launch_at_login": true,
+    "language": "auto"
+  }
+}
