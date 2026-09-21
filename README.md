@@ -96,9 +96,13 @@ Open **Settings** from the menu bar icon. Four tabs, in the order you need them:
 1. **Machines & screens** — name each Mac and give it a channel number. The channel
    is literally the Easy-Switch key on your keyboard: the Mac you reach with key 2 is
    channel 2. Mark which row is *this* Mac. Then add your monitor (**Scan displays**
-   fills in its name and EDID) and type the input source each Mac uses. The cell for
-   this Mac has a **Read** button that asks the monitor directly, so in practice you
-   only type numbers for the other machines.
+   fills in its name and EDID) and pick the input source each Mac uses from the list
+   the monitor reported — "HDMI 1", "DisplayPort 2", by name. The one on screen right
+   now sits at the top under **Showing now**, so the Mac you are sitting at can point
+   at its own port; **Read this Mac's input**, next to the EDID, fills that cell in
+   for you. A monitor that will not report its inputs leaves a plain number box, and
+   you type the code. **Custom…** at the end of the list covers a monitor that reports
+   too few; ↩ puts the cell back on the list.
 2. **Keyboard & mouse** — grant Input Monitoring, then **Scan devices**. Mark the
    keyboard as the **trigger** (its leaving is what starts a switch) and the mouse as
    **follow** (it gets sent along). A device is one or the other, never both.

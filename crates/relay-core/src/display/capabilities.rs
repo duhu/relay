@@ -108,7 +108,16 @@ fn parse_hex_list(values: &str) -> Vec<u8> {
 /// section is walked properly. Anything that does not parse yields an empty
 /// list: a guessed input source would switch the screen to the wrong machine.
 pub(crate) fn parse_input_codes(caps: &str) -> Vec<u8> {
-    let Some(vcp) = section_body(caps, "vcp(") else {
+    // MCCS spells the section headers in lower case and the display we have
+    // obeys, but one shouting `VCP(` would otherwise read as no list at all and
+    // drop the row back to the number box with nothing to explain it. Walking a
+    // lowercased copy is safe: ASCII case folding cannot change a byte's
+    // length, so every offset into the copy is the same offset into `caps` —
+    // and the codes come back owned, so nothing borrows it afterwards.
+    // `u8::from_str_radix` already takes either case, so the hex tokens below
+    // need nothing.
+    let lowered = caps.to_ascii_lowercase();
+    let Some(vcp) = section_body(&lowered, "vcp(") else {
         return Vec::new();
     };
     let bytes = vcp.as_bytes();
@@ -349,6 +358,11 @@ mod tests {
     #[test]
     fn rubbish_inside_the_vcp_section_means_no_list() {
         assert_eq!(parse_input_codes("(vcp(02 ZZ 60(11)))"), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn a_shouting_display_is_read_the_same() {
+        assert_eq!(parse_input_codes("(VCP(02 60(11 12)))"), vec![0x11, 0x12]);
     }
 
     #[test]

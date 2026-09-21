@@ -92,6 +92,10 @@ const screenUuid = ref<string | null>(null);
 // A `readScreen()` that was dropped because the capabilities read had the
 // cable. `loadInputSources()` re-fires it once it lets go.
 const screenPending = ref(false);
+// The same for a `loadInputSources()` dropped because another one was already
+// running, and whether that dropped call had asked for a refresh.
+const sourcesPending = ref(false);
+const sourcesPendingRefresh = ref(false);
 const switching = ref<number | null>(null);
 
 /**
@@ -289,7 +293,16 @@ async function readScreen() {
 async function loadInputSources(refresh = false) {
   const c = cfg.value;
   if (!c || c.displays.length === 0) return;
-  if (loadingSources.value || readingScreen.value || readingInput.value !== null) return;
+  // A pass already has the cable, and it holds it for seconds — long enough for
+  // a row added in the meantime to be dropped here and keep the number box for
+  // the rest of this window's life. Remembered and re-fired below, the way
+  // `readScreen` is.
+  if (loadingSources.value) {
+    sourcesPending.value = true;
+    if (refresh) sourcesPendingRefresh.value = true;
+    return;
+  }
+  if (readingScreen.value || readingInput.value !== null) return;
 
   loadingSources.value = true;
   try {
@@ -317,8 +330,22 @@ async function loadInputSources(refresh = false) {
     // number box, which is what is already on screen.
   } finally {
     loadingSources.value = false;
+    // A pass that arrived while this one held the cable, re-run now. The flag
+    // is cleared before the re-run, so only a real caller can set it again —
+    // this cannot chase its own tail — and the re-run skips every display
+    // already cached, so it costs a round trip only for the rows that need one.
+    // A dropped refresh has to come back as a refresh: the scan button is the
+    // only way to re-ask a display that stayed silent.
+    if (sourcesPending.value) {
+      const again = sourcesPendingRefresh.value;
+      sourcesPending.value = false;
+      sourcesPendingRefresh.value = false;
+      void loadInputSources(again);
+    }
     // A screen read that came in while the cable was busy was dropped rather
-    // than queued, and the header would go on showing the older answer.
+    // than queued, and the header would go on showing the older answer. It goes
+    // after the re-run above, which takes the cable straight back and hands the
+    // read on again when it is done.
     if (screenPending.value) {
       screenPending.value = false;
       void readScreen();
@@ -713,8 +740,11 @@ function addDisplayFromScan(display: DiscoveredDisplay) {
     name: display.name,
     input_by_host: {},
   });
-  // Scan, add, then set the input is the first-run path, and the row added
-  // here is exactly the one the scan's own refresh could not have seen.
+  // Scan, add, then set the input is the first-run path, and the row added here
+  // is exactly the one the scan's own refresh could not have seen. That refresh
+  // is usually still running when this lands — a second or so per display — so
+  // this call is normally the one that gets dropped and re-fired from the
+  // refresh's `finally`, rather than one that reaches the monitor itself.
   void loadInputSources();
 }
 
