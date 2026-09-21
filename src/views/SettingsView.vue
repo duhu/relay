@@ -79,12 +79,19 @@ const screenAt = ref<number | null>(null);
 // case ("" for the first external display). A row with no entry — or an empty
 // one — falls back to the number box it always had.
 const inputSources = ref<Record<string, ipc.InputSource[]>>({});
-// Cells the user switched to typing a code by hand, keyed `${row}:${host}`.
+// Cells the user switched to typing a code by hand, keyed by the display's
+// EDID UUID in lower case and the host: `${uuid}:${host}`.
 const customCells = ref<Set<string>>(new Set());
 const loadingSources = ref(false);
 // The code the first display is showing, for the "current" marker. `readScreen`
 // already asks; this keeps the raw answer, which it used to throw away.
 const screenInput = ref<number | null>(null);
+// Which display `screenInput` came from. Row indices shift when a row is
+// deleted; the UUID does not.
+const screenUuid = ref<string | null>(null);
+// A `readScreen()` that was dropped because the capabilities read had the
+// cable. `loadInputSources()` re-fires it once it lets go.
+const screenPending = ref(false);
 const switching = ref<number | null>(null);
 
 /**
@@ -217,10 +224,19 @@ async function readScreen() {
   if (!c || c.displays.length === 0) {
     screenAt.value = null;
     screenInput.value = null;
+    screenUuid.value = null;
+    return;
+  }
+  // The capabilities read holds the cable for seconds at a time, long enough
+  // for a tab change or a finished switch to be dropped here and leave the
+  // header claiming the screen is where it no longer is — so that one is
+  // remembered and re-fired rather than lost.
+  if (loadingSources.value) {
+    screenPending.value = true;
     return;
   }
   // The row's own read button talks to the same monitor; one at a time.
-  if (readingScreen.value || readingInput.value !== null || loadingSources.value) return;
+  if (readingScreen.value || readingInput.value !== null) return;
   // So does the core, mid-switch, over the same cable: a read dropped into its
   // VCP traffic can confuse either side. The last answer stays on screen until
   // the next read, which `switchTo()` runs once the switch is through.
@@ -231,6 +247,7 @@ async function readScreen() {
   try {
     const code = await ipc.readDisplayInput(display.edid_uuid);
     screenInput.value = code;
+    screenUuid.value = display.edid_uuid;
     const rows = cfg.value?.displays ?? [];
     // The config may have been reloaded while the monitor answered.
     const row =
@@ -250,35 +267,52 @@ async function readScreen() {
 }
 
 /**
- * Asks every configured display for its input sources and caches the answers.
+ * Asks every display this window has not asked yet for its input sources and
+ * caches the answers.
  *
- * Slow — seconds, not milliseconds — so it runs when the window opens and when
- * the user rescans, never on a timer. It shares the DDC cable with the two
- * reads above and with the core's own switching, so it waits its turn under
- * exactly the same rules.
+ * Slow — seconds, not milliseconds — so it runs when the window opens, when a
+ * row is added and when the user rescans, never on a timer. Displays already in
+ * the cache are skipped, and so are rows that share a UUID: two hand-added rows
+ * both carry "" and would otherwise cost the same monitor two full timeouts.
+ *
+ * It shares the DDC cable with the two reads above and with the core's own
+ * switching, so it waits its turn under exactly the same rules — and, holding
+ * the cable longest of anything here, it asks the core for a fresh state first
+ * and hands the cable back to the screen read it displaced.
  */
 async function loadInputSources() {
   const c = cfg.value;
   if (!c || c.displays.length === 0) return;
   if (loadingSources.value || readingScreen.value || readingInput.value !== null) return;
-  const state = status.value?.state;
-  if (state === "Switching" || state === "Confirming") return;
 
   loadingSources.value = true;
   try {
-    const found: Record<string, ipc.InputSource[]> = {};
+    // Nothing polls the status in this window, so the state it holds may be
+    // minutes old — and this is the longest the app ever occupies the cable.
+    await refreshStatus();
+    const state = status.value?.state;
+    if (state === "Switching" || state === "Confirming") return;
+
+    const byUuid: Record<string, ipc.InputSource[]> = { ...inputSources.value };
     for (const display of c.displays) {
       const key = display.edid_uuid.toLowerCase();
+      if (key in byUuid) continue;
       // A display that will not answer costs one round trip and yields an
       // empty list; the row simply keeps its number box.
-      found[key] = await ipc.listInputSources(display.edid_uuid);
+      byUuid[key] = await ipc.listInputSources(display.edid_uuid);
     }
-    inputSources.value = found;
+    inputSources.value = byUuid;
   } catch {
     // Nothing to tell the user: a capabilities read that fails means the
     // number box, which is what is already on screen.
   } finally {
     loadingSources.value = false;
+    // A screen read that came in while the cable was busy was dropped rather
+    // than queued, and the header would go on showing the older answer.
+    if (screenPending.value) {
+      screenPending.value = false;
+      void readScreen();
+    }
   }
 }
 
@@ -623,6 +657,10 @@ function removeHost(position: number) {
 
 function addDisplay() {
   cfg.value?.displays.push({ edid_uuid: "", name: "", input_by_host: {} });
+  // The new row has no cached source list, so it would show the number box for
+  // the rest of this window's life; asking costs nothing for the rows already
+  // answered.
+  void loadInputSources();
 }
 
 function removeDisplay(position: number) {
@@ -663,6 +701,9 @@ function addDisplayFromScan(display: DiscoveredDisplay) {
     name: display.name,
     input_by_host: {},
   });
+  // Scan, add, then set the input is the first-run path, and the row added
+  // here is exactly the one the scan's own refresh could not have seen.
+  void loadInputSources();
 }
 
 /**
@@ -722,6 +763,11 @@ async function readInput(display: DisplayConfig, host: number, row: number) {
       return;
     }
     target.input_by_host[String(host)] = code;
+    // The button just asked the same monitor `readScreen` asks, so its answer
+    // is the fresher one — otherwise the picker beside it would go on calling
+    // the old code "current".
+    screenInput.value = code;
+    screenUuid.value = uuid;
     showToast(t("toast.readInput", { code }));
   } catch (err) {
     await showBanner(t("error.readInput", { detail: String(err) }));
@@ -748,8 +794,12 @@ function sourcesFor(display: DisplayConfig): ipc.InputSource[] {
   return inputSources.value[display.edid_uuid.toLowerCase()] ?? [];
 }
 
-function cellKey(row: number, host: number): string {
-  return `${row}:${host}`;
+/**
+ * A cell's identity. By the display, not by its position: deleting a row above
+ * it would otherwise re-point every flag onto the wrong cell, mid-edit.
+ */
+function cellKey(display: DisplayConfig, host: number): string {
+  return `${display.edid_uuid.toLowerCase()}:${host}`;
 }
 
 /**
@@ -758,8 +808,8 @@ function cellKey(row: number, host: number): string {
  * Only when the display reported a list and the user has not asked to type a
  * code by hand for this particular cell.
  */
-function picks(display: DisplayConfig, row: number, host: number): boolean {
-  return sourcesFor(display).length > 0 && !customCells.value.has(cellKey(row, host));
+function picks(display: DisplayConfig, host: number): boolean {
+  return sourcesFor(display).length > 0 && !customCells.value.has(cellKey(display, host));
 }
 
 /**
@@ -780,19 +830,22 @@ function optionsFor(display: DisplayConfig, host: number): ipc.InputSource[] {
  * One option's label. The code itself is deliberately absent — picking by name
  * is the whole point — except for codes the standard does not name.
  *
- * "current" is only ever shown on the first display's row: that is the only one
- * `readScreen` asks about, and claiming to know about the others would be a
- * guess.
+ * "current" is only ever shown on the display that was actually asked — by its
+ * UUID, since row indices shift. Claiming to know what a display nobody read is
+ * showing would be a guess.
  */
-function optionLabel(source: ipc.InputSource, row: number): string {
+function optionLabel(source: ipc.InputSource, display: DisplayConfig): string {
   const name = source.name ?? t("displays.inputCode", { code: source.code });
-  const known = row === 0 && screenInput.value !== null && screenInput.value === source.code;
+  const asked =
+    screenUuid.value !== null &&
+    screenUuid.value.toLowerCase() === display.edid_uuid.toLowerCase();
+  const known = asked && screenInput.value === source.code;
   return known ? t("displays.inputCurrent", { name }) : name;
 }
 
-function choose(display: DisplayConfig, row: number, host: number, raw: string) {
+function choose(display: DisplayConfig, host: number, raw: string) {
   if (raw === "custom") {
-    customCells.value = new Set(customCells.value).add(cellKey(row, host));
+    customCells.value = new Set(customCells.value).add(cellKey(display, host));
     return;
   }
   if (raw === "") {
@@ -1076,10 +1129,10 @@ async function switchTo(host: Host) {
                     <td v-for="host in cfg.hosts" :key="host.index">
                       <div class="input-cell">
                         <select
-                          v-if="picks(display, i, host.index)"
+                          v-if="picks(display, host.index)"
                           :value="inputFor(display, host.index)"
                           @change="
-                            choose(display, i, host.index, ($event.target as HTMLSelectElement).value)
+                            choose(display, host.index, ($event.target as HTMLSelectElement).value)
                           "
                         >
                           <option value="">{{ t("displays.inputEmpty") }}</option>
@@ -1088,7 +1141,7 @@ async function switchTo(host: Host) {
                             :key="source.code"
                             :value="source.code"
                           >
-                            {{ optionLabel(source, i) }}
+                            {{ optionLabel(source, display) }}
                           </option>
                           <option value="custom">{{ t("displays.inputCustom") }}</option>
                         </select>
@@ -1105,7 +1158,7 @@ async function switchTo(host: Host) {
                         <button
                           v-if="host.index === cfg.this_host"
                           class="mini"
-                          :title="t('displays.readTitle')"
+                          :title="loadingSources ? t('displays.readBusy') : t('displays.readTitle')"
                           :disabled="readingInput !== null || readingScreen || loadingSources"
                           @click="readInput(display, host.index, i)"
                         >
