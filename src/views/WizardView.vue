@@ -712,7 +712,12 @@ function buildConfig(): Config {
   return {
     schema_version: SCHEMA_VERSION,
     this_host: here?.index ?? 0,
-    hosts: rows.map((row) => ({ index: row.index, name: row.name })),
+    // By channel, not by the order the rows were typed: the settings table and
+    // the tray menu both list the hosts in file order, and a menu that reads
+    // 2, 3, 1 is a puzzle the user did not ask for.
+    hosts: rows
+      .map((row) => ({ index: row.index, name: row.name }))
+      .sort((a, b) => a.index - b.index),
     displays: display
       ? [{ edid_uuid: display.edid_uuid, name: display.name, input_by_host: byHost }]
       : [],
