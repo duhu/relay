@@ -50,6 +50,14 @@ const STATE_KEYS: Record<string, string> = {
 const BUSY_STATES = ["Confirming", "Switching", "Cooldown"];
 
 const cfg = ref<Config | null>(null);
+/**
+ * `cfg` as it was when the file was last read or written, serialized.
+ *
+ * This is how `onShown` tells an untouched window from an edited one, which is
+ * the only thing it needs to know to decide whether re-reading the file would
+ * be a refresh or a theft.
+ */
+const baseline = ref("");
 const status = ref<Status | null>(null);
 const granted = ref(false);
 const tab = ref<TabId>("overview");
@@ -135,6 +143,12 @@ onMounted(() => {
     .listen("shown", () => void onShown())
     .then((off) => {
       unlistenShown = off;
+    })
+    .catch((err) => {
+      // Without this listener the window shows whatever it happened to be
+      // holding when it was put away, for as long as it lives — and it has no
+      // other channel to say so.
+      console.error("cannot listen for the window being shown again", err);
     });
 });
 
@@ -146,16 +160,45 @@ onUnmounted(() => {
 
 /**
  * Re-reads what the world outside this window may have changed while it was
- * hidden — and only that.
+ * hidden — and drops what this window itself has no business still showing.
  *
- * The config is deliberately *not* re-read: hiding rather than destroying is
- * what lets a half-finished edit survive being put away, and loading
- * `config.json` again would throw it out. The input sources are deliberately
- * not re-read either: a capabilities read costs about a second per display and
- * a monitor's input list does not change while the window is away, so asking
- * again stays where it already is, behind the scan button.
+ * The input sources are deliberately not re-read: a capabilities read costs
+ * about a second per display, which would be paid on every single reopen, and
+ * a list gone stale — the user swapped or woke a monitor while the window was
+ * away — costs a row nothing worse than the number box it falls back to when
+ * it has no list at all. Re-asking therefore stays where it already is, behind
+ * 「扫描显示器」.
  */
 async function onShown() {
+  // Nothing loaded means nothing to protect: reopening is the retry it used
+  // to be when closing the window destroyed it.
+  if (!cfg.value) {
+    await load();
+    return;
+  }
+  // Both are about something that happened before the window was put away —
+  // a read that failed last week should not be the first thing on screen.
+  banner.value = "";
+  saveError.value = "";
+  // Collapsing the scan lists is exactly what destroying the window used to
+  // do, and a week-old list offers to add a receiver that may not be paired
+  // any more. Rescanning is one click.
+  found.value = null;
+  foundDisplays.value = null;
+  // `cfg` is a snapshot that can now live for days, and the file is the single
+  // source of truth (invariant 7 in `docs/overview.md`) — a hand edit
+  // underneath it would be silently reverted by the next save. The comparison
+  // decides which mistake to avoid: a window nobody has typed into has no
+  // reason to keep showing a stale file, and one that has been typed into has
+  // every reason not to lose the typing.
+  if (JSON.stringify(cfg.value) === baseline.value) {
+    try {
+      cfg.value = await ipc.getConfig();
+      baseline.value = JSON.stringify(cfg.value);
+    } catch (err) {
+      await showBanner(t("error.loadConfig", { detail: String(err) }));
+    }
+  }
   await refreshStatus();
   try {
     granted.value = await ipc.inputMonitoringGranted();
@@ -174,6 +217,7 @@ async function load() {
   customCells.value = new Set();
   try {
     cfg.value = await ipc.getConfig();
+    baseline.value = JSON.stringify(cfg.value);
     banner.value = "";
   } catch (err) {
     await showBanner(t("error.loadConfig", { detail: String(err) }));
@@ -445,6 +489,9 @@ async function save() {
   saving.value = true;
   try {
     await ipc.saveConfig(c);
+    // What was just written is what the file now holds, so this is the new
+    // "untouched" for `onShown` to compare against.
+    baseline.value = JSON.stringify(c);
     // The validation message is the only thing the banner ever shows for a
     // save, so an accepted one clears it.
     banner.value = "";

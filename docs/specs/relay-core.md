@@ -163,7 +163,7 @@ Idle ─DeviceArrived(trigger)─► Confirming(debounce) ─未再离开、且�
 - 同一二进制：无参数 → 常驻 app（tray + core）；有子命令 → CLI。
 - IPC：`~/Library/Application Support/Relay/relay.sock`，NDJSON；消息 `hello / switch{target} / status / open_settings / open_wizard / reload_config`；单实例由 `flock(relay.lock)` 保证。
 - CLI 找不到常驻实例：`relay switch` 自启常驻实例后重试一次；`--no-spawn` 则退 3。
-- 设置窗口：Tauri window，URL 路由 `settings / wizard / log`；关闭即销毁；通过 `commands.rs` 读写配置与触发"试切"（试切也是 `TriggerEvent::Manual`）。
+- 设置窗口：Tauri window，URL 路由 `settings / wizard / log`；关闭即隐藏（窗口不销毁，未保存的编辑得以保留，再次呼出时刷新窗口无从得知的部分）；通过 `commands.rs` 读写配置与触发"试切"（试切也是 `TriggerEvent::Manual`）。
 
 ## 8. 权限、签名、安装
 

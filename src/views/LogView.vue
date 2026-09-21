@@ -38,8 +38,8 @@ onMounted(() => {
   // comes back. Both are targeted at this window, which is why they are listened
   // for on it rather than on the app.
   const self = getCurrentWindow();
-  void self.listen("hidden", () => stop()).then(remember);
-  void self.listen("shown", () => start()).then(remember);
+  void self.listen("hidden", () => stop()).then(remember).catch(cannotListen);
+  void self.listen("shown", () => start()).then(remember).catch(cannotListen);
 });
 
 onUnmounted(() => {
@@ -50,6 +50,15 @@ onUnmounted(() => {
 
 function remember(off: () => void) {
   unlisten.push(off);
+}
+
+/**
+ * A listener that could not be registered means this window stops following
+ * the log the first time it is put away, and it has no other channel to say
+ * so — the console is where a failure this quiet can still be found.
+ */
+function cannotListen(err: unknown) {
+  console.error("cannot listen for this window being hidden or shown", err);
 }
 
 /** Refreshes now and keeps refreshing; safe to call on an already-running poll. */

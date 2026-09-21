@@ -50,6 +50,9 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        // Registered here rather than on each window, so that every window is
+        // covered from birth: `windows::open` also runs off the main thread.
+        .on_window_event(windows::hide_on_close)
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
