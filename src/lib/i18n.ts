@@ -175,6 +175,75 @@ const zhHans: Record<string, string> = {
   "transfer.title": "配置搬到另一台 Mac",
   "transfer.hint": "导出的是当前生效的配置，没保存的改动不在里面。",
   "transfer.export": "导出配置",
+  "transfer.import": "导入配置",
+  "transfer.rerun": "重新运行向导",
+
+  // The wizard: the first screen a Mac that has never been configured shows,
+  // and the fast path for a second one. Same words as the settings window —
+  // 机器 / 通道 / 触发 / 跟随 / 输入源 — so the two cannot teach different ones.
+  "wizard.title": "Relay 设置向导",
+  "wizard.stepOf": "第 {step} 步 / 共 {total} 步",
+  "wizard.back": "上一步",
+  "wizard.next": "下一步",
+  "wizard.finish": "完成",
+
+  "wizard.choiceTitle": "开始之前",
+  "wizard.choiceHint": "这是第一台配 Relay 的 Mac，还是已经有一台配好了？",
+  "wizard.choiceFirst": "这是第一台",
+  "wizard.choiceFirstHint": "四步：授权、键鼠、机器、显示器。",
+  "wizard.choiceImport": "已经有一台配好了",
+  "wizard.choiceImportHint": "读那台导出的配置文件，只问你一两句。",
+
+  "wizard.importTitle": "从另一台 Mac 导入",
+  "wizard.importHint": "两台机器的配置只差两处：本机是哪一台，以及离开本机时送去哪。",
+  "wizard.importPick": "选择配置文件",
+  "wizard.importChange": "换一个文件",
+  "wizard.importNoFile": "还没有选文件",
+  "wizard.importWhich": "哪一台是本机？",
+  "wizard.keyboardSays": "键盘说本机是通道 {channel}",
+  "wizard.leaveTitle": "从本机离开时，默认送去哪？",
+  "wizard.leaveHint": "有三台机器，触发设备离开本机时无从推断该去哪一台。",
+
+  "wizard.permissionTitle": "输入监控授权",
+  "wizard.permissionHint": "没有这项授权，Relay 读不到键鼠的通道，也切不了。",
+  "wizard.permissionRecheck": "重新检查",
+  "wizard.permissionNeeded": "授权到手才能继续",
+
+  "wizard.devicesTitle": "键盘和鼠标",
+  "wizard.devicesHint": "各选一个：「触发」留在本机负责发现切换，「跟随」跟着画面走。",
+  "wizard.devicesNone":
+    "没扫到可切换的设备。Relay 至少需要一个触发设备和一个跟随设备，把键鼠切回本机再扫一次。",
+  "wizard.thisChannel": "这台是通道 {channel}",
+  "wizard.channelDisagree": "两个设备说的通道不一样，选一个：",
+  "wizard.pickDevices": "触发和跟随各选一个",
+  "wizard.pickChannel": "先选本机的通道",
+
+  "wizard.machinesTitle": "共用这套键鼠的机器",
+  "wizard.machinesHint": "名字随便起；通道号就是键鼠上的 Easy-Switch 按键。",
+
+  "wizard.displaysTitle": "共用的显示器",
+  "wizard.displaysHint": "选这几台机器轮流用的那台显示器。",
+  "wizard.displaysNone": "没找到能用 DDC 控制的显示器，可以先不配，之后在设置里加。",
+  "wizard.displaysSkip": "先不配显示器",
+  "wizard.inputsTitle": "每台机器的输入源",
+  "wizard.inputsLoading": "正在问显示器有哪些输入源…",
+  "wizard.reading": "读取中…",
+
+  "wizard.doneTitle": "配置好了",
+  "wizard.doneHint": "配置已经写入，Relay 开始工作了。",
+  "wizard.doneExportAsk": "要不要导出一份，拿去配别的机器？",
+  "wizard.doneNext": "剩下的都能在设置里改。",
+  "wizard.doneGo": "去设置页",
+
+  // What the wizard checks before the backend ever sees the config, so the
+  // user gets a sentence to act on instead of an English `ConfigError`.
+  "wizard.needDevices": "Relay 需要一个「触发」设备和一个「跟随」设备，回到「键盘和鼠标」各选一个。",
+  "wizard.duplicateChannel": "两台机器用了同一个通道号，每台各占一个。",
+  "wizard.needLeaveTo": "有三台机器，先选离开本机时默认送去哪一台。",
+  "wizard.needInput": "还没填「{name}」在这台显示器上的输入源。",
+  "wizard.duplicateInput": "两台机器都填了输入源 {code}；一个输入源只能对上一台机器。",
+  "wizard.errorRead": "无法读取这个配置文件：{detail}",
+  "wizard.errorImport": "导入失败：{detail}",
 
   // The footer.
   "footer.savedNote": "保存后立即生效",
@@ -349,6 +418,79 @@ const en: Record<string, string> = {
   "transfer.hint":
     "What is exported is the config that is running; unsaved edits are not in it.",
   "transfer.export": "Export the config",
+  "transfer.import": "Import a config",
+  "transfer.rerun": "Run the wizard again",
+
+  "wizard.title": "Set up Relay",
+  "wizard.stepOf": "Step {step} of {total}",
+  "wizard.back": "Back",
+  "wizard.next": "Next",
+  "wizard.finish": "Finish",
+
+  "wizard.choiceTitle": "Before we start",
+  "wizard.choiceHint":
+    "Is this the first Mac you are setting Relay up on, or is another one already set up?",
+  "wizard.choiceFirst": "This is the first Mac",
+  "wizard.choiceFirstHint": "Four steps: permission, keyboard and mouse, Macs, display.",
+  "wizard.choiceImport": "Another Mac is already set up",
+  "wizard.choiceImportHint": "Read the config it exported; you answer one or two questions.",
+
+  "wizard.importTitle": "Import from another Mac",
+  "wizard.importHint":
+    "Two Macs' configs differ in two things only: which Mac this one is, and where a switch away from it goes.",
+  "wizard.importPick": "Choose a config file",
+  "wizard.importChange": "Choose another file",
+  "wizard.importNoFile": "No file chosen yet",
+  "wizard.importWhich": "Which of these is this Mac?",
+  "wizard.keyboardSays": "The keyboard says this Mac is channel {channel}",
+  "wizard.leaveTitle": "Where does a switch away from this Mac go?",
+  "wizard.leaveHint":
+    "With three Macs the trigger device cannot work out which one to leave to.",
+
+  "wizard.permissionTitle": "Input Monitoring",
+  "wizard.permissionHint":
+    "Without it Relay cannot read the keyboard's channel, nor change it.",
+  "wizard.permissionRecheck": "Check again",
+  "wizard.permissionNeeded": "Granted is how this step ends",
+
+  "wizard.devicesTitle": "Keyboard and mouse",
+  "wizard.devicesHint":
+    "One of each: the trigger stays on this Mac and notices the switch, the follower goes with the screen.",
+  "wizard.devicesNone":
+    "No switchable device found. Relay needs one trigger and one follower, so bring the keyboard and mouse back to this Mac and scan again.",
+  "wizard.thisChannel": "This Mac is channel {channel}",
+  "wizard.channelDisagree": "The two devices report different channels; pick one:",
+  "wizard.pickDevices": "Pick one trigger and one follower",
+  "wizard.pickChannel": "Pick this Mac's channel first",
+
+  "wizard.machinesTitle": "The Macs sharing this keyboard",
+  "wizard.machinesHint":
+    "Any name will do; the channel is the Easy-Switch key on the keyboard and the mouse.",
+
+  "wizard.displaysTitle": "The shared display",
+  "wizard.displaysHint": "The one display these Macs take turns on.",
+  "wizard.displaysNone":
+    "No display this Mac can drive over DDC. You can leave it out and add one later in Settings.",
+  "wizard.displaysSkip": "No shared display for now",
+  "wizard.inputsTitle": "Each Mac's input source",
+  "wizard.inputsLoading": "Asking the display which inputs it has…",
+  "wizard.reading": "Reading…",
+
+  "wizard.doneTitle": "All set",
+  "wizard.doneHint": "The config is written and Relay is running on it.",
+  "wizard.doneExportAsk": "Export a copy to set up the next Mac with?",
+  "wizard.doneNext": "Everything else is in Settings.",
+  "wizard.doneGo": "Open Settings",
+
+  "wizard.needDevices":
+    "Relay needs one trigger device and one follower; go back to “Keyboard and mouse” and pick one of each.",
+  "wizard.duplicateChannel": "Two Macs claim the same channel; each one needs its own.",
+  "wizard.needLeaveTo": "With three Macs, pick where a switch away from this one goes.",
+  "wizard.needInput": "“{name}” has no input source on this display yet.",
+  "wizard.duplicateInput":
+    "Two Macs are both on input source {code}; one input source can name only one Mac.",
+  "wizard.errorRead": "Cannot read that config file: {detail}",
+  "wizard.errorImport": "Importing failed: {detail}",
 
   "footer.savedNote": "Changes take effect immediately",
 

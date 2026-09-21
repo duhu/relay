@@ -553,6 +553,18 @@ async function exportConfig() {
   }
 }
 
+/**
+ * Hands the window over to the wizard, which owns both of the questions an
+ * import has to ask ("which of these Macs are you", "where does a switch away
+ * from here go") — asking them here as well would be the same form twice.
+ *
+ * `?import` puts the wizard straight on its import screen: the user who
+ * pressed「导入配置」has already answered the fork it opens with.
+ */
+function openWizard(at?: "import") {
+  window.location.hash = at ? `#/wizard?${at}` : "#/wizard";
+}
+
 function hostName(host: Host): string {
   return host.name || t("common.unnamed");
 }
@@ -1645,6 +1657,8 @@ async function switchTo(host: Host) {
             <span class="muted">{{ t("transfer.hint") }}</span>
             <span class="v">
               <button class="mini" @click="exportConfig">{{ t("transfer.export") }}</button>
+              <button class="mini" @click="openWizard('import')">{{ t("transfer.import") }}</button>
+              <button class="mini" @click="openWizard()">{{ t("transfer.rerun") }}</button>
             </span>
           </div>
         </section>
