@@ -32,6 +32,8 @@ const recording = ref<number | null>(null);
 /** `null` until the first answer, so the strip does not flash on open. */
 const axGranted = ref<boolean | null>(null);
 let axTimer = 0;
+/** Set on unmount, so a permission answer arriving late starts no timer. */
+let disposed = false;
 
 function actionOf(button: number): ButtonAction | null {
   return props.modelValue.find((m) => m.button === button)?.action ?? null;
@@ -75,17 +77,31 @@ function choose(button: number, value: string) {
 }
 
 function startRecording(button: number) {
-  if (recording.value === null) window.addEventListener("keydown", onKeydown, true);
+  if (recording.value === null) {
+    window.addEventListener("keydown", onKeydown, true);
+    window.addEventListener("pointerdown", onPointerdown, true);
+    window.addEventListener("blur", stopRecording);
+  }
   recording.value = button;
 }
 
 /**
  * Ends recording without writing anything: the row falls back to whatever the
- * config held before, which is what Esc and a cancelled recording both want.
+ * config held before, which is what Esc, a click elsewhere and leaving the
+ * window all want.
  */
 function stopRecording() {
   recording.value = null;
   window.removeEventListener("keydown", onKeydown, true);
+  window.removeEventListener("pointerdown", onPointerdown, true);
+  window.removeEventListener("blur", stopRecording);
+}
+
+// A press anywhere but the recording row's own dropdown and button gives the
+// keyboard back, so the rest of the window is usable without reaching for Esc.
+function onPointerdown(e: PointerEvent) {
+  const own = (e.target as Element | null)?.closest?.("[data-button]");
+  if (own?.getAttribute("data-button") !== String(recording.value)) stopRecording();
 }
 
 // Capture phase on window, so the focused dropdown never sees the keys: an
@@ -102,11 +118,13 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 async function checkAccessibility() {
+  if (disposed) return;
   try {
     axGranted.value = await ipc.accessibilityGranted();
   } catch (err) {
     console.error("cannot read the Accessibility state", err);
   }
+  if (disposed) return;
   if (axGranted.value === false) {
     if (!axTimer) axTimer = window.setInterval(() => void checkAccessibility(), 2000);
   } else if (axTimer) {
@@ -126,8 +144,10 @@ async function grant() {
 onMounted(() => void checkAccessibility());
 
 onUnmounted(() => {
+  disposed = true;
   stopRecording();
   window.clearInterval(axTimer);
+  axTimer = 0;
 });
 </script>
 
@@ -141,7 +161,7 @@ onUnmounted(() => {
     </div>
     <div v-for="row in ROWS" :key="row.button" class="row">
       <span>{{ t(row.label) }}</span>
-      <span class="v">
+      <span class="v" :data-button="row.button">
         <select
           :value="choice(row.button)"
           @change="choose(row.button, ($event.target as HTMLSelectElement).value)"
@@ -170,8 +190,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* One width for all three, so the rows line up whatever each one says; wide
-   enough for "Unchanged (browser forward)". */
+/* Wide enough that the longest English option, "Unchanged (browser forward)",
+   is never clipped. Rows showing keycaps still sit their dropdown further left. */
 select {
   width: 220px;
 }

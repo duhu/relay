@@ -67,7 +67,7 @@ relay/
     plan.rs           build_plan · target_for_leave · next_host
     coordinator.rs    sans-IO 状态机（事件 + now → 动作）
     executor.rs       按 SwitchPlan 驱动 trait 对象：先显示器（重试 1+ddc_retries）后设备
-    runtime.rs        事件循环、单定时器、切换串行化、配置仅在 Idle 时替换、CoreHandle
+    runtime.rs        事件循环、单定时器、切换串行化、配置仅在 Idle 时替换（mouse_buttons 例外：每次重载成功即生效，切换中也是；重载失败则保留上一份）、CoreHandle
     trigger/          mod.rs（PresenceTracker：多 HID 节点折叠为一次 Left/Arrived）· presence.rs（IOHIDManager 回调 FFI、list_hid_devices）
     device/           mod.rs（HostSwitchable trait）· logitech.rs（LogitechHidpp）· discovery.rs（scan_switchable_devices）· replay_support.rs（test only）
     display/          mod.rs（DisplayInput trait）· ioav_ffi.rs（三个 IOKit 私有符号：create / write / read）· ddc.rs（IORegistry 发现 + DDC 写入，DdcTransport 测试缝）capabilities.rs（能力串 0xF3 → 它支持哪几个输入源 + MCCS 名字表）
