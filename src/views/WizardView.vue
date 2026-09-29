@@ -19,6 +19,7 @@ import type {
   DiscoveredDevice,
   DiscoveredDisplay,
   InputSource,
+  MouseButtonMapping,
   Options,
 } from "../lib/ipc";
 
@@ -150,13 +151,14 @@ const readChannel = ref<number | null>(null);
 
 // --- what the wizard never asks about --------------------------------------
 
-// `timing`, `hotkeys` and `options` are the wizard's blind spot: no screen here
-// asks about them, so it must not write over them. On a first run they are the
-// defaults; on a rerun from Advanced they are whatever the live config holds,
-// or a tuned debounce, a set of global hotkeys and an explicit language would
-// quietly go back to the defaults.
+// `timing`, `hotkeys`, `mouse_buttons` and `options` are the wizard's blind
+// spot: no screen here asks about them, so it must not write over them. On a
+// first run they are the defaults; on a rerun from Advanced they are whatever
+// the live config holds, or a tuned debounce, a set of global hotkeys, mapped
+// mouse buttons and an explicit language would quietly go back to the defaults.
 const timing = ref({ ...DEFAULT_TIMING });
 const hotkeys = ref<Record<string, string>>({});
+const mouseButtons = ref<MouseButtonMapping[]>([]);
 const options = ref<Options>({ ...DEFAULT_OPTIONS });
 
 /**
@@ -168,12 +170,13 @@ const options = ref<Options>({ ...DEFAULT_OPTIONS });
  */
 const liveHosts = ref<HostRow[]>([]);
 
-/** Keeps the three above from whatever is on disk, when anything is. */
+/** Fills everything above in from whatever is on disk, when anything is. */
 async function keepUnasked() {
   try {
     const cfg = await ipc.getConfig();
     timing.value = { ...cfg.timing };
     hotkeys.value = { ...cfg.hotkeys };
+    mouseButtons.value = cfg.mouse_buttons ?? [];
     options.value = { ...cfg.options };
     liveHosts.value = cfg.hosts.map((host) => ({ index: host.index, name: host.name }));
   } catch {
@@ -670,8 +673,9 @@ function setInput(host: number, raw: string) {
 /**
  * The config the four steps add up to.
  *
- * `timing`, `hotkeys` and `options` come from `keepUnasked()`, not from this
- * screen: the wizard never asks about them, and the advanced tab does.
+ * `timing`, `hotkeys`, `mouse_buttons` and `options` come from `keepUnasked()`,
+ * not from this screen: the wizard never asks about them, the settings window
+ * does.
  */
 function buildConfig(): Config {
   const rows = hostRows.value;
@@ -724,6 +728,7 @@ function buildConfig(): Config {
     devices,
     timing: { ...timing.value },
     hotkeys: { ...hotkeys.value },
+    mouse_buttons: [...mouseButtons.value],
     options: { ...options.value },
   };
 }

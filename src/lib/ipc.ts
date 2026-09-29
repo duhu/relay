@@ -52,6 +52,31 @@ export interface Options {
   language: Language;
 }
 
+/** A modifier key a shortcut holds down, as `relay_core::config` spells it. */
+export type Modifier = "cmd" | "ctrl" | "opt" | "shift";
+
+/** A shortcut the core already knows by name; see `relay_core::config::Preset`. */
+export type Preset =
+  | "mission_control"
+  | "app_windows"
+  | "show_desktop"
+  | "space_left"
+  | "space_right";
+
+/** A macOS virtual key code (kVK_*, 0–127) and the modifiers held with it. */
+export interface KeyCombo {
+  key_code: number;
+  modifiers: Modifier[];
+}
+
+export type ButtonAction = { preset: Preset } | { keys: KeyCombo };
+
+/** One mouse button, by CGEvent `buttonNumber` (0-based), and what it presses. */
+export interface MouseButtonMapping {
+  button: number;
+  action: ButtonAction;
+}
+
 export interface Config {
   schema_version: number;
   this_host: HostIndex;
@@ -61,6 +86,8 @@ export interface Config {
   timing: Timing;
   hotkeys: Record<string, string>;
   options: Options;
+  /** Optional: the backend leaves the key out when no button is mapped. */
+  mouse_buttons?: MouseButtonMapping[];
 }
 
 export interface StepResult {
@@ -83,6 +110,8 @@ export interface Status {
   this_host: HostIndex | null;
   hosts: [HostIndex, string][];
   input_monitoring: boolean;
+  /** Whether Relay may post keyboard events, which mapped mouse buttons need. */
+  accessibility: boolean;
   last_report: SwitchReport | null;
   /**
    * The concrete language the window and the tray must speak, `"zh-Hans"` or
@@ -252,4 +281,18 @@ export function requestInputMonitoring(): Promise<boolean> {
 
 export function openPrivacySettings(): Promise<void> {
   return invoke<void>("open_privacy_settings");
+}
+
+/** Whether Relay may post keyboard events; mapped mouse buttons need it. */
+export function accessibilityGranted(): Promise<boolean> {
+  return invoke<boolean>("accessibility_granted");
+}
+
+/**
+ * Adds Relay to the Accessibility list with the system prompt and, when it is
+ * not granted yet, opens that pane of System Settings. Resolves to whether it
+ * is granted now — usually not yet, since the user grants it in that pane.
+ */
+export function requestAccessibility(): Promise<boolean> {
+  return invoke<boolean>("request_accessibility");
 }

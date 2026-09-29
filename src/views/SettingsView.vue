@@ -19,9 +19,12 @@ import type {
   DiscoveredDisplay,
   DisplayConfig,
   Host,
+  MouseButtonMapping,
   StepResult,
   Status,
 } from "../lib/ipc";
+
+import MouseButtonsCard from "./MouseButtonsCard.vue";
 
 const TABS = [
   { id: "overview", key: "tab.overview" },
@@ -142,6 +145,20 @@ const screenPending = ref(false);
 const sourcesPending = ref(false);
 const sourcesPendingRefresh = ref(false);
 const switching = ref<number | null>(null);
+
+/**
+ * `cfg.mouse_buttons` for the mouse-buttons card. Reading never writes the key
+ * in, and an empty list takes it out again, so a config without mappings
+ * serializes exactly as it was read and the window does not count as edited.
+ */
+const mouseButtons = computed<MouseButtonMapping[]>({
+  get: () => cfg.value?.mouse_buttons ?? [],
+  set: (rows) => {
+    if (!cfg.value) return;
+    if (rows.length > 0) cfg.value.mouse_buttons = rows;
+    else delete cfg.value.mouse_buttons;
+  },
+});
 
 /**
  * When the status is re-read after a save.
@@ -1662,6 +1679,8 @@ async function switchTo(host: Host) {
             </div>
           </div>
         </section>
+
+        <MouseButtonsCard v-model="mouseButtons" />
       </template>
 
       <template v-if="tab === 'advanced' && cfg">

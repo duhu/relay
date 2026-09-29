@@ -58,7 +58,7 @@ loop has been observed to wedge the Bluetooth stack until reboot.
 | **Macs** | Apple Silicon, macOS 14 or newer. Intel is not supported. |
 | **Monitor** | An external display that accepts DDC/CI writes on VCP `0x60` (input source). Reading `0x60` back is optional but makes Relay smarter. Built-in displays cannot be switched. |
 | **Keyboard / mouse** | Logitech devices that implement HID++ 2.0 `ChangeHost` (`0x1814`) — i.e. anything with Easy-Switch keys. Bluetooth LE, Bolt and Unifying all work. |
-| **Permission** | Input Monitoring, so Relay can see the keyboard come and go. Granted once, in System Settings. |
+| **Permission** | Input Monitoring, so Relay can see the keyboard come and go. Granted once, in System Settings. Accessibility too, only if you map mouse buttons to shortcuts. |
 
 The Easy-Switch channel numbers on your devices and the input sources on your monitor
 are what you map to each other in Settings. Nothing is hardcoded and nothing is
@@ -124,6 +124,11 @@ the screen, keyboard and mouse are, a manual switch per Mac, the last switch ste
 step), **Macs & displays**, **Keyboard & mouse**, and **Advanced** (debounce, cooldown,
 retries, behaviour switches, export/import, and **Run the wizard again**). Config lives
 at `~/Library/Application Support/Relay/config.json` and is reloaded when it changes.
+
+**Keyboard & mouse** also turns an MX mouse's thumb gesture button, back and forward
+buttons into keyboard shortcuts — Mission Control, the Space to the left or right, or
+one you record — without Logi Options+ or OpenLogi installed. This needs the
+Accessibility permission.
 
 The interface is available in English and Simplified Chinese, following the system
 language unless you pick one in Advanced.
