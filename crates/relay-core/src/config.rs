@@ -44,6 +44,11 @@ pub struct Config {
     pub timing: Timing,
     /// Host index (as a string, e.g. `"0"`) to accelerator, e.g. `"Ctrl+Alt+1"`.
     pub hotkeys: BTreeMap<String, String>,
+    /// Mouse buttons this Mac turns into keyboard shortcuts; see
+    /// `crate::buttons`. Absent in older files, and omitted when empty so a
+    /// config without mappings reads exactly as it did before P9.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mouse_buttons: Vec<MouseButtonMapping>,
     pub options: Options,
 }
 
@@ -88,6 +93,52 @@ pub struct DeviceConfig {
     /// Where to switch when this trigger leaves; required with three hosts or more.
     #[serde(default)]
     pub leave_to: Option<HostIndex>,
+}
+
+/// One mouse button and the shortcut it stands for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MouseButtonMapping {
+    /// The CGEvent `buttonNumber` (0-based): on an MX Master 4, 6 is the thumb
+    /// gesture button, 3 back and 4 forward. 0 and 1 are refused.
+    pub button: u8,
+    pub action: ButtonAction,
+}
+
+/// What a mapped button sends.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ButtonAction {
+    /// A named system shortcut, expanded at run time by `crate::buttons`.
+    Preset(Preset),
+    /// A shortcut the user recorded.
+    Keys(KeyCombo),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Preset {
+    MissionControl,
+    AppWindows,
+    ShowDesktop,
+    SpaceLeft,
+    SpaceRight,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyCombo {
+    /// A macOS virtual key code (`kVK_*`), 0–127.
+    pub key_code: u16,
+    #[serde(default)]
+    pub modifiers: Vec<Modifier>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Modifier {
+    Cmd,
+    Ctrl,
+    Opt,
+    Shift,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +308,12 @@ pub enum ConfigError {
     AdoptLeaveToRequired,
     #[error("the host to leave towards cannot be this machine")]
     AdoptLeaveToIsThisHost,
+    #[error("mouse button {button} is the left or right button and cannot be remapped")]
+    MouseButtonReserved { button: u8 },
+    #[error("mouse button {button} is mapped twice; every button needs its own row")]
+    DuplicateMouseButton { button: u8 },
+    #[error("mouse button {button} sends key code {key_code}, which is not a macOS key code")]
+    KeyCodeOutOfRange { button: u8, key_code: u16 },
 }
 
 impl ConfigError {
@@ -453,6 +510,30 @@ impl Config {
             }
         }
 
+        // The tap resolves a button to the first matching row, so a second row
+        // for the same button would silently never apply.
+        let mut seen_buttons: HashSet<u8> = HashSet::with_capacity(self.mouse_buttons.len());
+        for mapping in &self.mouse_buttons {
+            if mapping.button <= 1 {
+                return Err(ConfigError::MouseButtonReserved {
+                    button: mapping.button,
+                });
+            }
+            if !seen_buttons.insert(mapping.button) {
+                return Err(ConfigError::DuplicateMouseButton {
+                    button: mapping.button,
+                });
+            }
+            if let ButtonAction::Keys(keys) = &mapping.action {
+                if keys.key_code > 127 {
+                    return Err(ConfigError::KeyCodeOutOfRange {
+                        button: mapping.button,
+                        key_code: keys.key_code,
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -567,6 +648,7 @@ pub(crate) mod test_support {
                 ("0".to_string(), "Ctrl+Alt+1".to_string()),
                 ("1".to_string(), "Ctrl+Alt+2".to_string()),
             ]),
+            mouse_buttons: Vec::new(),
             options: Options {
                 switch_back_on_reconnect: true,
                 pull_on_arrival: true,
@@ -1160,5 +1242,114 @@ mod tests {
         let mut cfg = three_host_config();
         cfg.adopt(2, Some(1)).expect("adopt");
         cfg.validate().expect("an adopted config must be usable");
+    }
+
+    #[test]
+    fn a_config_without_mouse_buttons_still_loads() {
+        let cfg = spec_config();
+        assert!(cfg.mouse_buttons.is_empty());
+        cfg.validate().expect("the spec example stays valid");
+    }
+
+    #[test]
+    fn mouse_buttons_round_trip_and_an_empty_list_is_omitted() {
+        let mut cfg = two_host_config();
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(
+            !json.contains("mouse_buttons"),
+            "an empty list is not written"
+        );
+
+        cfg.mouse_buttons = vec![
+            MouseButtonMapping {
+                button: 6,
+                action: ButtonAction::Preset(Preset::MissionControl),
+            },
+            MouseButtonMapping {
+                button: 3,
+                action: ButtonAction::Keys(KeyCombo {
+                    key_code: 33,
+                    modifiers: vec![Modifier::Cmd],
+                }),
+            },
+        ];
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(
+            json["mouse_buttons"][0]["action"]["preset"],
+            "mission_control"
+        );
+        assert_eq!(
+            json["mouse_buttons"][1]["action"]["keys"]["modifiers"][0],
+            "cmd"
+        );
+        let back: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn an_unknown_preset_or_modifier_is_a_parse_error() {
+        for action in [
+            r#"{"preset":"launchpad"}"#,
+            r#"{"keys":{"key_code":1,"modifiers":["hyper"]}}"#,
+        ] {
+            let text = SPEC_EXAMPLE.replacen(
+                "\"hotkeys\"",
+                &format!(
+                    "\"mouse_buttons\": [{{\"button\": 6, \"action\": {action}}}],\n  \"hotkeys\""
+                ),
+                1,
+            );
+            assert!(
+                serde_json::from_str::<Config>(&text).is_err(),
+                "{action} must not parse"
+            );
+        }
+    }
+
+    #[test]
+    fn the_left_and_right_buttons_cannot_be_remapped() {
+        for button in [0, 1] {
+            let mut cfg = two_host_config();
+            cfg.mouse_buttons = vec![MouseButtonMapping {
+                button,
+                action: ButtonAction::Preset(Preset::ShowDesktop),
+            }];
+            assert!(
+                matches!(cfg.validate(), Err(ConfigError::MouseButtonReserved { button: b }) if b == button)
+            );
+        }
+    }
+
+    #[test]
+    fn a_button_mapped_twice_is_refused() {
+        let mut cfg = two_host_config();
+        let row = MouseButtonMapping {
+            button: 6,
+            action: ButtonAction::Preset(Preset::ShowDesktop),
+        };
+        cfg.mouse_buttons = vec![row.clone(), row];
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::DuplicateMouseButton { button: 6 })
+        ));
+    }
+
+    #[test]
+    fn a_key_code_past_127_is_refused() {
+        let mut cfg = two_host_config();
+        cfg.mouse_buttons = vec![MouseButtonMapping {
+            button: 4,
+            action: ButtonAction::Keys(KeyCombo {
+                key_code: 128,
+                modifiers: vec![],
+            }),
+        }];
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::KeyCodeOutOfRange {
+                button: 4,
+                key_code: 128
+            })
+        ));
     }
 }

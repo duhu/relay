@@ -5,6 +5,7 @@
 //! and the runtime that wires them together. Everything but the IOKit FFI in
 //! [`trigger::presence`] and [`permissions`] is testable without hardware.
 
+pub mod buttons;
 pub mod config;
 pub mod config_watch;
 pub mod coordinator;
