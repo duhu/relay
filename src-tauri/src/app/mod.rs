@@ -60,6 +60,8 @@ pub fn run() {
             commands::list_input_sources,
             commands::input_monitoring_granted,
             commands::request_input_monitoring,
+            commands::accessibility_granted,
+            commands::request_accessibility,
             commands::open_privacy_settings,
             commands::read_config_file,
             commands::import_config,

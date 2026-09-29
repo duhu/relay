@@ -284,6 +284,7 @@ mod tests {
             this_host: hosts.first().map(|(index, _)| *index),
             hosts,
             input_monitoring: true,
+            accessibility: true,
             last_report: None,
             language: LANG_ZH_HANS,
         }

@@ -22,6 +22,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = "0.3.2"
+# The mouse-button remapper: an event tap on `OtherMouseDown/Up` and the
+# keyboard events it posts in their place.
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGEvent",
+    "CGEventTypes",
+    "CGRemoteOperation",
+] }
 objc2-io-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "hid",

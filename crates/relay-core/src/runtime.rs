@@ -16,6 +16,10 @@ use notify::RecommendedWatcher;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
+#[cfg(target_os = "macos")]
+use crate::buttons::tap::ButtonRemapper;
+#[cfg(target_os = "macos")]
+use crate::buttons::ButtonMap;
 use crate::config::{Config, ConfigError, Language};
 use crate::config_watch;
 use crate::coordinator::{Action, Coordinator, Event, State};
@@ -40,6 +44,8 @@ pub struct Status {
     pub this_host: Option<HostIndex>,
     pub hosts: Vec<(HostIndex, String)>,
     pub input_monitoring: bool,
+    /// Whether the mouse-button remapper may swallow buttons and post keys.
+    pub accessibility: bool,
     pub last_report: Option<SwitchReport>,
     /// The concrete language the window and the tray must speak, `"zh-Hans"`
     /// or `"en"`. `options.language` may say `"auto"`; this never does, so the
@@ -57,6 +63,7 @@ impl Status {
             this_host: None,
             hosts: Vec::new(),
             input_monitoring: false,
+            accessibility: false,
             last_report: None,
             // There is no config to read a preference out of yet, so the
             // system's own preference is the only answer there is.
@@ -166,7 +173,8 @@ impl Core {
             }
         };
 
-        let mut handle = Self::start_with(config_path, log, raw_rx, config_rx, None);
+        let buttons = Some(Arc::new(ButtonRemapper::start()));
+        let mut handle = Self::spawn(config_path, log, raw_rx, config_rx, None, buttons);
         handle.config_watcher = watcher;
         handle
     }
@@ -180,6 +188,27 @@ impl Core {
         raw_rx: mpsc::UnboundedReceiver<RawHidEvent>,
         config_rx: mpsc::UnboundedReceiver<()>,
         factories: Option<Factories>,
+    ) -> CoreHandle {
+        // Tests drive the loop through here; they must never install a real
+        // event tap on the machine running them.
+        Self::spawn(
+            config_path,
+            log,
+            raw_rx,
+            config_rx,
+            factories,
+            #[cfg(target_os = "macos")]
+            None,
+        )
+    }
+
+    fn spawn(
+        config_path: PathBuf,
+        log: LogBuffer,
+        raw_rx: mpsc::UnboundedReceiver<RawHidEvent>,
+        config_rx: mpsc::UnboundedReceiver<()>,
+        factories: Option<Factories>,
+        #[cfg(target_os = "macos")] buttons: Option<Arc<ButtonRemapper>>,
     ) -> CoreHandle {
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (status_tx, status_rx) = watch::channel(Status::unconfigured());
@@ -201,6 +230,8 @@ impl Core {
             last_report: None,
             status_tx,
             done_tx,
+            #[cfg(target_os = "macos")]
+            buttons,
         };
         // A bad config is a state, not a failure to start: the UI shows it.
         let _ = runtime.reload();
@@ -310,6 +341,10 @@ struct Runtime {
     last_report: Option<SwitchReport>,
     status_tx: watch::Sender<Status>,
     done_tx: mpsc::UnboundedSender<SwitchReport>,
+    /// The mouse-button remapper, fed every config that loads; `None` in
+    /// tests, which must not touch the real event stream.
+    #[cfg(target_os = "macos")]
+    buttons: Option<Arc<ButtonRemapper>>,
 }
 
 impl Runtime {
@@ -350,14 +385,17 @@ impl Runtime {
             };
 
             let installed = self.install_pending_config();
-            // `input_monitoring` is read live, so it can change without any
-            // event of ours: comparing this iteration's value against the last
-            // published one is what makes the tray notice a permission granted
-            // (or revoked) in System Settings. One `status()` per wakeup, so
-            // the permission is still checked exactly once either way.
+            // `input_monitoring` and `accessibility` are read live, so they
+            // can change without any event of ours: comparing this
+            // iteration's values against the last published ones is what
+            // makes the tray notice a permission granted (or revoked) in
+            // System Settings. One `status()` per wakeup, so each permission
+            // is still checked exactly once either way.
             let status = self.status();
-            let permission_flipped =
-                status.input_monitoring != self.status_tx.borrow().input_monitoring;
+            let published = self.status_tx.borrow();
+            let permission_flipped = status.input_monitoring != published.input_monitoring
+                || status.accessibility != published.accessibility;
+            drop(published);
             if changed || installed || permission_flipped {
                 self.status_tx.send_replace(status);
             }
@@ -680,6 +718,13 @@ impl Runtime {
                 self.tracker
                     .set_watched(cfg.devices.iter().map(|d| d.id.clone()).collect());
 
+                // Button mappings have nothing to do with switching, so they
+                // apply at once, even while a switch is running.
+                #[cfg(target_os = "macos")]
+                if let Some(buttons) = &self.buttons {
+                    buttons.set_map(ButtonMap::from_config(&cfg.mouse_buttons));
+                }
+
                 if self.is_idle() {
                     self.install(cfg);
                 } else {
@@ -834,6 +879,7 @@ impl Runtime {
                 })
                 .unwrap_or_default(),
             input_monitoring: permissions::input_monitoring_granted(),
+            accessibility: permissions::accessibility_granted(),
             last_report: self.last_report.clone(),
             language: self
                 .cfg

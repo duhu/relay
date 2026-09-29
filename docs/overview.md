@@ -71,7 +71,8 @@ relay/
     trigger/          mod.rs（PresenceTracker：多 HID 节点折叠为一次 Left/Arrived）· presence.rs（IOHIDManager 回调 FFI、list_hid_devices）
     device/           mod.rs（HostSwitchable trait）· logitech.rs（LogitechHidpp）· discovery.rs（scan_switchable_devices）· replay_support.rs（test only）
     display/          mod.rs（DisplayInput trait）· ioav_ffi.rs（三个 IOKit 私有符号：create / write / read）· ddc.rs（IORegistry 发现 + DDC 写入，DdcTransport 测试缝）capabilities.rs（能力串 0xF3 → 它支持哪几个输入源 + MCCS 名字表）
-    permissions.rs    IOHIDCheckAccess / IOHIDRequestAccess
+    buttons/          把配置的鼠标键换成键盘快捷键（CGEventTap，需辅助功能权限，不碰 HID++）：mod.rs（ButtonMap，纯逻辑）· tap.rs（ButtonRemapper，relay-buttons 线程上的事件 tap）
+    permissions.rs    IOHIDCheckAccess / IOHIDRequestAccess · AXIsProcessTrusted(WithOptions)
     log.rs            tracing → 按天文件 + 200 条环形缓冲供 UI
     examples/          hid_watch.rs（观察插拔事件）· scan.rs（扫描可切换设备；需输入监控，勿在 agent shell 里跑）· ddc.rs（`list` / `set <edid_uuid|first> <code>`；无需权限，但写前先确认用户在本机）
 ```

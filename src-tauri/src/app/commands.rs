@@ -30,6 +30,10 @@ use super::paths;
 const PRIVACY_PANE_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
 
+/// The System Settings pane that holds the Accessibility list.
+const ACCESSIBILITY_PANE_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
 /// What an export onto the live config file is told, in words the user can act
 /// on: the destination has to be some other file.
 const SAME_FILE: &str =
@@ -317,6 +321,26 @@ pub fn open_privacy_settings() -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn accessibility_granted() -> bool {
+    permissions::accessibility_granted()
+}
+
+/// Puts Relay in the Accessibility list (with the system's own prompt) and
+/// opens that list, where the switch has to be flipped by hand.
+#[tauri::command(async)]
+pub fn request_accessibility() -> Result<bool, String> {
+    let granted = permissions::request_accessibility();
+    if !granted {
+        std::process::Command::new("open")
+            .arg(ACCESSIBILITY_PANE_URL)
+            .spawn()
+            .map(drop)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(granted)
 }
 
 #[cfg(test)]

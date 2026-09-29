@@ -1,13 +1,17 @@
 //! Mouse buttons turned into keyboard shortcuts (P9).
 //!
 //! This module is the pure half: what a configured button resolves to, and
-//! the CGEventFlags the synthesized key event carries. The macOS half is an
-//! event tap that swallows the button and posts the keys. Nothing here talks
-//! to the mouse — the buttons arrive as ordinary `OtherMouseDown/Up` events.
+//! the CGEventFlags the synthesized key event carries. The macOS half is
+//! [`tap`], an event tap that swallows the button and posts the keys. Nothing
+//! here talks to the mouse — the buttons arrive as ordinary
+//! `OtherMouseDown/Up` events.
 
 use std::collections::BTreeMap;
 
 use crate::config::{ButtonAction, KeyCombo, Modifier, MouseButtonMapping, Preset};
+
+#[cfg(target_os = "macos")]
+pub mod tap;
 
 const FLAG_SHIFT: u64 = 0x0002_0000;
 const FLAG_CTRL: u64 = 0x0004_0000;

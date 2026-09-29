@@ -407,6 +407,7 @@ fn print_status(status: &StatusView) {
         println!("hosts: {}", hosts.join(", "));
     }
     println!("input_monitoring: {}", status.input_monitoring);
+    println!("accessibility: {}", status.accessibility);
 }
 
 fn print_plan(data: Value) -> i32 {
@@ -458,6 +459,9 @@ struct StatusView {
     this_host: Option<u8>,
     hosts: Vec<(u8, String)>,
     input_monitoring: bool,
+    /// Absent from a resident app older than P9; read as not granted.
+    #[serde(default)]
+    accessibility: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -620,6 +624,7 @@ mod tests {
             this_host: Some(1),
             hosts: vec![(1, "Bam.Work".to_string()), (2, "Bam.Mini".to_string())],
             input_monitoring: true,
+            accessibility: true,
             last_report: None,
             language: "zh-Hans",
         };
@@ -634,6 +639,7 @@ mod tests {
         assert_eq!(view.this_host, Some(1));
         assert_eq!(view.hosts, status.hosts);
         assert!(view.input_monitoring);
+        assert!(view.accessibility);
     }
 
     #[test]
