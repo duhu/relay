@@ -41,10 +41,11 @@ pub fn seconds_since_last_input() -> Option<Duration> {
     None
 }
 
-/// A usable idle time, or `None` for a negative, NaN or infinite reading.
+/// A usable idle time, or `None` for a negative, NaN, infinite or absurdly
+/// large reading (`from_secs_f64` would panic on the last one).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn from_seconds(seconds: f64) -> Option<Duration> {
-    (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
+    Duration::try_from_secs_f64(seconds).ok()
 }
 
 #[cfg(test)]
@@ -62,5 +63,12 @@ mod tests {
         assert_eq!(from_seconds(-1.0), None);
         assert_eq!(from_seconds(f64::NAN), None);
         assert_eq!(from_seconds(f64::INFINITY), None);
+        assert_eq!(from_seconds(f64::NEG_INFINITY), None);
+    }
+
+    #[test]
+    fn a_huge_finite_reading_is_unknown_not_a_panic() {
+        assert_eq!(from_seconds(1e300), None);
+        assert_eq!(from_seconds(f64::MAX), None);
     }
 }

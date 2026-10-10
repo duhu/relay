@@ -118,7 +118,7 @@ Idle ─DeviceArrived(trigger)─► Confirming(debounce) ─未再离开、且�
 - 这条「离开压过取回」的优先级一直管到**正在问显示器的那一刻**：读显示器是在事件循环里等的，runtime 因此把这次读与 HID 事件通道**赛跑**，任何设备事件一到就当场丢掉这次读、先处理事件（读不出来正好退回兜底规则）。否则 `DeviceLeft` 会排在读后面，等轮到它时 `TimerFired` 已经把状态机推进了 `Switching（取回本机）`，而 `Switching` 里的离开只会清「待返回」——本机就会把画面抢过来并留住，而键盘在对面。
 - 两条到达规则不重叠：P1 的「待返回」只在本机自己刚切走的 `Switching` / `Cooldown` 窗口里生效，P3/P5 的取回只在 `Idle` 里生效；显示器的观测同样只影响 `Idle` 这一条，`Switching` / `Cooldown` 里的到达照旧只走「待返回」。
 - cooldown 期间的手动切换（热键 / 托盘 / CLI）同样忽略。返回切换自己又带一段 cooldown，所以一次回连会把「按下 Easy-Switch 也不响应」的窗口拉长到两段 cooldown（默认共约 10s），期间用户有意的切换会被丢弃。
-- 执行器：**自动**计划（`manual == false`）里设备层返回「设备不在本机」时该步记为跳过（`ok = true`，detail `not on this Mac, skipped`）——对方主机已把它搬走是正常情况；手动计划（`relay switch` / 托盘 / 试切）仍是失败 `device not present`。设备层分不出「被对方主机搬走」和「关机 / 睡眠了」，两者一样算作跳过，只有日志里那一步的 detail 能看出来；触发设备自己睡着断开则在触发层就被上面「睡着不算离开」拦下，不会走到这里。
+- 执行器：**自动**计划（`manual == false`）里设备层返回「设备不在本机」时该步记为跳过（`ok = true`，detail `not on this Mac, skipped`）——对方主机已把它搬走是正常情况；手动计划（`relay switch` / 托盘 / 试切）仍是失败 `device not present`。设备层分不出「被对方主机搬走」和「关机 / 睡眠了」，两者一样算作跳过，只有日志里那一步的 detail 能看出来；触发设备自己睡着断开则只在本机处于 `Idle`、已闲置 ≥10 分钟且闲置时长读得出来时，才在触发层被上面「睡着不算离开」拦下、不会走到这里；其余情况照旧走到这里，按上面的规则算跳过。
 - 目标推断：触发设备离开 → 目标 = `hosts` 中除本机外唯一者；多于一个取触发设备上的 `leave_to`（3 主机时向导要求填写）。
 - Manual：无 debounce；键盘与鼠标都发 `switch_to_host`；仍走 cooldown。
 - 每步写结构化日志：`tracing` → `~/Library/Logs/Relay/relay.log`（按天）+ 内存环形缓冲 200 条供设置页 Log 视图。
