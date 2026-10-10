@@ -19,7 +19,7 @@
 | D9 | 运行形态参考 AskHuman：默认静默常驻，设置窗口按需呼出，单二进制多角色 | 用户确认 |
 | D10 | 一台设备只能是「触发」或「跟随」之一（2026-09-20 用户拍板，不加开关） | 「按鼠标也能带走键盘」的双向用法需要设备同时担任两角，但键盘能否被遥控切换（HID++ ChangeHost）从未验证过——日志里键盘永远是 `already at target`；前提不成立时该选项没有价值 |
 | D11 | 输入源改为从显示器报上来的清单里按名字选，界面不显示编号；「现在显示的」那个用 `<optgroup>` 分组标题标出，不写进选项文字 | 编号（16/17/18）对用户没有意义，当初配笔记本时只能靠试。显示器自己知道它有几个口：AOC 答 `60(0F 10 11 12)`，四选一。名字用 MCCS 标准名，**不是机身上印的字**——哪个物理口是 "DisplayPort 1" 显示器不说，靠「现在显示的」补上。标记不写进选项文字，是因为收起来的 `<select>` 框宽度固定：`DisplayPort 2 · 当前` 在 136px 里放不下，而分组标题只在展开时出现 |
-| D12 | 触发设备断开时本机已闲置 ≥10 分钟（`DEVICE_SLEEP_IDLE`，常量，不进配置）→ 算设备省电睡眠，不算离开；闲置时长读不出来照常离开（2026-10-10 用户拍板） | 罗技键鼠闲置约 2 小时会自己断开蓝牙，设备层分不出这和按 Easy-Switch；原先每晚都把画面和鼠标送走。10 分钟与屏幕休眠一致：屏幕都黑了，不可能是刚按键离开的 |
+| D12 | 触发设备断开时本机已闲置 ≥10 分钟（`DEVICE_SLEEP_IDLE`，常量，不进配置）→ 算设备省电睡眠，不算离开；只在状态机 `Idle` 时拦，其余状态照旧交给状态机（离开永远压过取回）；闲置时长读不出来照常离开（2026-10-10 用户拍板） | 罗技键鼠闲置约 2 小时会自己断开蓝牙，设备层分不出这和按 Easy-Switch；原先每晚都把画面和鼠标送走。10 分钟与屏幕休眠一致：屏幕都黑了，不可能是刚按键离开的 |
 
 ## 1. 范围
 
@@ -104,7 +104,7 @@ Idle ─DeviceArrived(trigger)─► Confirming(debounce) ─未再离开、且�
 ```
 - debounce 默认 800ms，cooldown 默认 5s，均可配。`Clock` trait 注入，测试用手动时钟。
 - Switching：① 每个显示器 `set_input(input_by_host[target])`；② 每个 `follow=true` 设备：`host_info()`，已在目标跳过，否则 `switch_to_host(target)`。
-- **睡着不算离开**（D12）：`is_trigger` 设备的 `DeviceLeft` 到来时，runtime 先读本机闲置时长（CoreGraphics `CGEventSourceSecondsSinceLastEventType`，HID 系统级、任意输入，无需权限）；≥10 分钟就记一行 `the device is asleep, not gone; staying put`，事件**不交给** `Coordinator`。读不出来、跟随设备、到达事件、手动切换一律照旧。代价（用户已接受）：键盘睡着后直接按 Easy-Switch 去别处，本机什么也看不见，鼠标要自己按一下通道键。
+- **睡着不算离开**（D12）：`Idle` 里 `is_trigger` 设备的 `DeviceLeft` 到来时，runtime 先读本机闲置时长（CoreGraphics `CGEventSourceSecondsSinceLastEventType`，HID 系统级、任意输入，无需权限）；≥10 分钟就记一行 `the device is asleep, not gone; staying put`，事件**不交给** `Coordinator`。读不出来、不在 `Idle`（离开仍须压过取回、清「待返回」）、跟随设备、到达事件、手动切换一律照旧。代价（用户已接受）：键盘睡着后直接按 Easy-Switch 去别处，本机什么也看不见，鼠标要自己按一下通道键。
 - `Switching` / `Cooldown` + `DeviceArrived(is_trigger)`：若本次切换的目标不是本机（确实切走了），记住「待返回」，并记住是哪一台设备记下的；只有同一台设备在窗口内再次离开才清除（别的设备——第二台触发设备，或被本次切换带走的 `follow` 设备——在窗口内报 `DeviceLeft` 时，不能抹掉键盘刚记下的「待返回」）。事件本身仍不打断当前切换 / 不缩短 cooldown。
 - `Cooldown` 到期（`now >= until`）且有「待返回」且 `options.switch_back_on_reconnect` → 发起 `StartSwitch { target: this_host, manual: false }`，重新进入 `Switching` → `Cooldown`；否则照常回 `Idle`。
 - `Idle` + `DeviceArrived(is_trigger)`（P3，`options.pull_on_arrival`，默认开）：**离开规则的镜像**。到达本身只进 `Confirming`（`target = this_host`）：除了「不是触发设备」和「选项关着」这两条拦在防抖之前，到达一律先防抖，此刻不问画面在哪儿。**「要不要取回」留到防抖到期那一刻再判**，分三支，依据是**画面在不在本机**（P5）：

@@ -453,7 +453,19 @@ impl Runtime {
     /// Decided here, at the I/O boundary, so the coordinator never sees the
     /// event at all. An unknown idle time is no evidence of sleep: the
     /// departure then counts, as it always has.
+    ///
+    /// Only an `Idle` machine is asked. Anywhere else the departure is part of
+    /// something already under way — an arrival being debounced or a screen
+    /// being read, a switch, a cooldown — and a leave always beats a pull: it
+    /// must still turn the pull into a leave, or clear a pending return.
     fn asleep_for(&self, id: &DeviceId) -> Option<Duration> {
+        let idle_machine = self
+            .coordinator
+            .as_ref()
+            .is_some_and(|coordinator| matches!(coordinator.state(), State::Idle));
+        if !idle_machine {
+            return None;
+        }
         let is_trigger = self
             .cfg
             .as_ref()
@@ -1334,10 +1346,7 @@ mod tests {
 
         the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
 
-        let status = h.handle.status().await;
-        assert_eq!(status.state, "Idle");
-        assert!(status.last_report.is_none(), "nothing was switched");
-        assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
+        assert_nothing_moved(&h).await;
         assert!(
             log.snapshot()
                 .iter()
@@ -1346,12 +1355,9 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_trigger_that_just_left_still_leaves() {
-        let h = start(Some(two_host_config()), None);
-
-        the_keyboard_leaves_after(&h, Some(Duration::from_secs(5))).await;
-
+    /// What [`a_trigger_leaving_switches_once_the_debounce_expires`] sees once
+    /// the keyboard has left: the screen and the mouse went to host 1.
+    async fn assert_the_keyboard_left(h: &Harness) {
         let status = h.handle.status().await;
         assert_eq!(status.state, "Cooldown");
         assert_eq!(
@@ -1363,6 +1369,43 @@ mod tests {
             ],
         );
         assert!(status.last_report.expect("a report").ok);
+    }
+
+    /// Nothing moved: the machine is idle and nobody was switched.
+    async fn assert_nothing_moved(h: &Harness) {
+        let status = h.handle.status().await;
+        assert_eq!(status.state, "Idle");
+        assert!(status.last_report.is_none(), "nothing was switched");
+        assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_that_just_left_still_leaves() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(5))).await;
+
+        assert_the_keyboard_left(&h).await;
+    }
+
+    /// The threshold itself counts as asleep (`>=`, not `>`).
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_idle_for_exactly_the_threshold_is_asleep() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(600))).await;
+
+        assert_nothing_moved(&h).await;
+    }
+
+    /// A second short of the threshold is still a departure.
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_idle_just_under_the_threshold_still_leaves() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(599))).await;
+
+        assert_the_keyboard_left(&h).await;
     }
 
     /// No idle reading is no evidence of sleep: the departure is taken at its
@@ -1373,17 +1416,27 @@ mod tests {
 
         the_keyboard_leaves_after(&h, None).await;
 
-        let status = h.handle.status().await;
-        assert_eq!(status.state, "Cooldown");
-        assert_eq!(
-            h.calls.calls(),
-            vec![
-                "display AOC U2790R3B set_input 18",
-                "device MX Master 3 host_info",
-                "device MX Master 3 switch_to_host 1",
-            ],
-        );
-        assert!(status.last_report.expect("a report").ok);
+        assert_the_keyboard_left(&h).await;
+    }
+
+    /// The gate only covers an idle machine. The keyboard touching down here
+    /// and leaving again inside the arrival's debounce is Easy-Switch pressed
+    /// straight on, however long nobody typed: a leave beats a pull (spec §5),
+    /// so the screen and the mouse still go after it.
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_leaving_during_its_arrival_debounce_leaves_however_idle() {
+        let h = start(Some(two_host_config()), None);
+        h.idle.set(Some(Duration::from_secs(2 * 60 * 60)));
+
+        h.raw.send(added(1, KEYBOARD_ID)).expect("send");
+        h.raw.send(added(2, MOUSE_ID)).expect("send");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(h.handle.status().await.state, "Confirming");
+
+        h.raw.send(RawHidEvent::Removed { node: 1 }).expect("send");
+        tokio::time::sleep(Duration::from_millis(900)).await;
+
+        assert_the_keyboard_left(&h).await;
     }
 
     /// The bounce-back path end to end: the keyboard failed to reach the other
