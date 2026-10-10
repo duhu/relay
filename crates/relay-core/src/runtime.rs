@@ -1470,7 +1470,8 @@ mod tests {
     /// The nightly bug (spec §5, D12): the keyboard drops Bluetooth by itself
     /// two hours into the night. That is not taken for a departure: the core
     /// waits out the sleep check, the monitor has nothing to say (the default
-    /// fake will not answer), and nothing moves.
+    /// fake will not answer, and a monitor that will not say is no evidence
+    /// anyone left), and nothing moves.
     #[tokio::test(start_paused = true)]
     async fn a_trigger_that_fell_asleep_does_not_leave() {
         let h = start(Some(two_host_config()), None);
@@ -1486,20 +1487,21 @@ mod tests {
             "the log says why the departure was not acted on"
         );
         tokio::time::sleep(SLEEP_CHECK_DELAY).await;
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            2,
+            "the arrival's and the check's"
+        );
         assert_nothing_moved(&h).await;
+        assert!(logged(&h, "the screen could not be placed on any host"));
     }
 
     /// 900 ms after the keyboard went, a leave debounce would long have run
     /// out into a switch. Still `Confirming` with nothing called means the
     /// sleep check is waiting.
     async fn assert_checking_where_the_screen_is(h: &Harness) {
-        let status = h.handle.status().await;
-        assert_eq!(
-            status.state, "Confirming",
-            "a sleep check is shown as Confirming"
-        );
-        assert!(status.last_report.is_none(), "nothing was switched");
-        assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
+        // A sleep check is shown as Confirming.
+        assert_untouched_in(h, "Confirming").await;
     }
 
     /// Does the core's log hold a line containing `needle`?
@@ -1529,8 +1531,13 @@ mod tests {
 
     /// Nothing moved: the machine is idle and nobody was switched.
     async fn assert_nothing_moved(h: &Harness) {
+        assert_untouched_in(h, "Idle").await;
+    }
+
+    /// The core is in `state` and no device or display was called.
+    async fn assert_untouched_in(h: &Harness, state: &str) {
         let status = h.handle.status().await;
-        assert_eq!(status.state, "Idle");
+        assert_eq!(status.state, state);
         assert!(status.last_report.is_none(), "nothing was switched");
         assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
     }
@@ -1695,23 +1702,6 @@ mod tests {
         );
         assert_nothing_moved(&h).await;
         assert!(logged(&h, "the screen is still here; the device is asleep"));
-    }
-
-    /// A monitor that will not say is no evidence anyone left.
-    #[tokio::test(start_paused = true)]
-    async fn a_sleeping_trigger_with_a_mute_monitor_moves_nothing() {
-        let h = start(Some(two_host_config()), None);
-
-        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
-        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
-
-        assert_eq!(
-            h.screen.reads.load(Ordering::SeqCst),
-            2,
-            "the arrival's and the check's"
-        );
-        assert_nothing_moved(&h).await;
-        assert!(logged(&h, "the screen could not be placed on any host"));
     }
 
     /// The keyboard was only blinking, or woke up: it is back before the check

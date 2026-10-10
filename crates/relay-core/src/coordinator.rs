@@ -619,8 +619,10 @@ impl Coordinator {
             Some(host) if host != self.cfg.this_host && self.cfg.has_host(host) => Ok(host),
             // Never send anything to a slot that may be unpaired.
             Some(host) if host != self.cfg.this_host => Err("the screen is on an undeclared host"),
-            // Still here, or no answer: no evidence anyone left.
-            _ => Err("the screen is still here; the device is asleep"),
+            // Still here: no evidence anyone left.
+            Some(_) => Err("the screen is still here; the device is asleep"),
+            // No answer is no evidence either.
+            None => Err("the screen could not be placed; the device is treated as asleep"),
         }
     }
 
@@ -1814,9 +1816,7 @@ mod tests {
     #[test]
     fn a_trigger_that_may_be_asleep_starts_a_sleep_check() {
         let (mut c, now) = coordinator();
-        let action = c.handle(Event::SuspectedSleep(keyboard()), now);
-        let deadline = now + Duration::from_secs(5);
-        assert_eq!(action, Action::ArmTimer(deadline));
+        let deadline = into_sleep_check(&mut c, now);
         assert_eq!(
             c.state(),
             &State::SleepCheck {
@@ -1974,17 +1974,17 @@ mod tests {
         let action = c.handle(Event::TimerFired, deadline);
         assert_eq!(
             action,
-            Action::Ignore("the screen is still here; the device is asleep")
+            Action::Ignore("the screen could not be placed; the device is treated as asleep")
         );
         assert_eq!(c.state(), &State::Idle);
 
         // Never asked at all: the same.
         let (mut c, now) = coordinator();
         let deadline = into_sleep_check(&mut c, now);
-        assert!(matches!(
+        assert_eq!(
             c.handle(Event::TimerFired, deadline),
-            Action::Ignore(_)
-        ));
+            Action::Ignore("the screen could not be placed; the device is treated as asleep")
+        );
         assert_eq!(c.state(), &State::Idle);
     }
 

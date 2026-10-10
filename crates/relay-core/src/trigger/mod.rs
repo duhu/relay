@@ -2,8 +2,8 @@
 //!
 //! [`presence`] is the macOS side (IOHIDManager on its own run loop); this
 //! module is the pure half that turns its raw node events into the
-//! [`TriggerEvent`]s the coordinator understands. [`idle`] tells a device
-//! that fell asleep from one that left.
+//! [`TriggerEvent`]s the coordinator understands. [`idle`] marks a departure
+//! as a possible sleep; the screen read, not the idle time, decides.
 
 pub mod idle;
 pub mod presence;
