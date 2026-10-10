@@ -32,7 +32,7 @@ use crate::log::{LogBuffer, LogEntry};
 use crate::permissions;
 use crate::plan::{build_plan, PlanError, SwitchPlan};
 use crate::trigger::{idle, presence, PresenceTracker, RawHidEvent};
-use crate::types::{DeviceId, HostIndex, TriggerEvent};
+use crate::types::{DeviceId, DeviceRole, HostIndex, TriggerEvent};
 
 /// Everything the tray and the settings window show.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -179,10 +179,10 @@ pub type DisplayFactory = Arc<dyn Fn(&Config) -> Vec<Arc<dyn DisplayInput>> + Se
 #[doc(hidden)]
 pub type DeviceFactory = Arc<dyn Fn(&Config) -> Vec<Arc<dyn HostSwitchable>> + Send + Sync>;
 
-/// How long this Mac has gone without keyboard or mouse input; `None` when
-/// that is unknown.
+/// How long this Mac has gone without input from a kind of device (for a
+/// keyboard, without a keystroke); `None` when that is unknown.
 #[doc(hidden)]
-pub type IdleProbe = Arc<dyn Fn() -> Option<Duration> + Send + Sync>;
+pub type IdleProbe = Arc<dyn Fn(DeviceRole) -> Option<Duration> + Send + Sync>;
 
 pub struct Core;
 
@@ -492,15 +492,14 @@ impl Runtime {
         if !idle_machine {
             return None;
         }
-        let is_trigger = self
+        let device = self
             .cfg
             .as_ref()
             .and_then(|cfg| cfg.device(id))
-            .is_some_and(|device| device.is_trigger);
-        if !is_trigger {
-            return None;
-        }
-        (self.idle)().filter(|idle| *idle >= DEVICE_SLEEP_IDLE)
+            .filter(|device| device.is_trigger)?;
+        // Asked about the kind of device that left: a keyboard is idle when
+        // nobody typed, however busy the mouse was.
+        (self.idle)(device.role).filter(|idle| *idle >= DEVICE_SLEEP_IDLE)
     }
 
     /// Would the coordinator use a reading if its timer expired now, and what
@@ -1114,7 +1113,7 @@ mod tests {
     use crate::config::test_support::{two_host_config, KEYBOARD_ID, MOUSE_ID};
     use crate::device::{DeviceError, HostSwitchable};
     use crate::display::{DisplayError, DisplayInput};
-    use crate::types::{DeviceId, HostInfo};
+    use crate::types::{DeviceId, DeviceRole, HostInfo};
 
     /// The calls the fakes saw, in order.
     #[derive(Clone, Default)]
@@ -1229,23 +1228,35 @@ mod tests {
 
     /// What the fake idle probe answers; `Some(ZERO)` — someone is typing
     /// right now — unless a test says otherwise, so every departure in the
-    /// tests that predate the probe is still a real one.
+    /// tests that predate the probe is still a real one. It also remembers
+    /// which kind of device it was last asked about.
     #[derive(Clone)]
-    struct FakeIdle(Arc<Mutex<Option<Duration>>>);
+    struct FakeIdle {
+        idle: Arc<Mutex<Option<Duration>>>,
+        asked: Arc<Mutex<Option<DeviceRole>>>,
+    }
 
     impl Default for FakeIdle {
         fn default() -> Self {
-            Self(Arc::new(Mutex::new(Some(Duration::ZERO))))
+            Self {
+                idle: Arc::new(Mutex::new(Some(Duration::ZERO))),
+                asked: Arc::default(),
+            }
         }
     }
 
     impl FakeIdle {
         fn set(&self, idle: Option<Duration>) {
-            *self.0.lock().expect("fake idle") = idle;
+            *self.idle.lock().expect("fake idle") = idle;
         }
 
-        fn get(&self) -> Option<Duration> {
-            *self.0.lock().expect("fake idle")
+        fn ask(&self, role: DeviceRole) -> Option<Duration> {
+            *self.asked.lock().expect("fake idle") = Some(role);
+            *self.idle.lock().expect("fake idle")
+        }
+
+        fn last_asked(&self) -> Option<DeviceRole> {
+            *self.asked.lock().expect("fake idle")
         }
     }
 
@@ -1284,7 +1295,7 @@ mod tests {
                     })
                     .collect()
             }),
-            idle: Arc::new(move || idle.get()),
+            idle: Arc::new(move |role| idle.ask(role)),
         }
     }
 
@@ -1531,6 +1542,24 @@ mod tests {
         the_keyboard_leaves_after(&h, Some(Duration::from_secs(5))).await;
 
         assert_the_keyboard_left(&h).await;
+    }
+
+    /// The idle time is asked about the device that left. For a keyboard
+    /// that means keystrokes only: a user working with the mouse alone for
+    /// two hours still lets the keyboard fall asleep, and "any input" would
+    /// call that a departure.
+    #[tokio::test(start_paused = true)]
+    async fn the_probe_is_asked_about_the_keyboard() {
+        let h = start(Some(two_host_config()), None);
+
+        // The mouse is not a trigger: its leaving asks the probe nothing.
+        h.raw.send(added(2, MOUSE_ID)).expect("send");
+        h.raw.send(RawHidEvent::Removed { node: 2 }).expect("send");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(h.idle.last_asked(), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(5))).await;
+        assert_eq!(h.idle.last_asked(), Some(DeviceRole::Keyboard));
     }
 
     /// The threshold itself counts as asleep (`>=`, not `>`).
