@@ -1201,6 +1201,16 @@ mod tests {
         idle: FakeIdle,
         path: PathBuf,
         _dir: tempfile::TempDir,
+        /// Keeps this test's own subscriber, feeding the core's `LogBuffer`,
+        /// the default on the test thread.
+        ///
+        /// Every harness installs one, not just the tests that read the log:
+        /// `tracing` caches a callsite's interest globally, and with a single
+        /// scoped subscriber registered it computes that interest from the
+        /// default of whichever thread reaches the callsite first. A test
+        /// thread without a subscriber would cache "never" for a line another
+        /// test is asserting on.
+        _log_guard: tracing::subscriber::DefaultGuard,
     }
 
     /// Starts a core over a config directory; `config` is written first when given.
@@ -1248,11 +1258,14 @@ mod tests {
 
         let calls = CallLog::default();
         let idle = FakeIdle::default();
+        let log = LogBuffer::new(200);
+        let log_guard =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(log.layer()));
         let (raw, raw_rx) = mpsc::unbounded_channel();
         let (config_changed, cfg_rx) = mpsc::unbounded_channel();
         let handle = Core::start_with(
             path.clone(),
-            LogBuffer::new(50),
+            log,
             raw_rx,
             cfg_rx,
             Some(factories(
@@ -1273,6 +1286,7 @@ mod tests {
             idle,
             path,
             _dir: dir,
+            _log_guard: log_guard,
         }
     }
 
@@ -1339,24 +1353,23 @@ mod tests {
     /// two hours into the night. Nobody left, so nothing may move.
     #[tokio::test(start_paused = true)]
     async fn a_trigger_that_fell_asleep_does_not_leave() {
-        let log = LogBuffer::new(200);
-        let _subscriber =
-            tracing::subscriber::set_default(tracing_subscriber::registry().with(log.layer()));
         let h = start(Some(two_host_config()), None);
 
         the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
 
         assert_nothing_moved(&h).await;
         assert!(
-            log.snapshot()
+            h.handle
+                .logs()
                 .iter()
                 .any(|entry| entry.message.contains("asleep")),
             "the log says why the departure was ignored"
         );
     }
 
-    /// What [`a_trigger_leaving_switches_once_the_debounce_expires`] sees once
-    /// the keyboard has left: the screen and the mouse went to host 1.
+    /// The keyboard has left: the screen and the mouse went to host 1, the
+    /// same outcome [`a_trigger_leaving_switches_once_the_debounce_expires`]
+    /// checks inline.
     async fn assert_the_keyboard_left(h: &Harness) {
         let status = h.handle.status().await;
         assert_eq!(status.state, "Cooldown");
