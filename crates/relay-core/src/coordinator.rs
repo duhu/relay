@@ -11,6 +11,18 @@ use crate::config::Config;
 use crate::plan;
 use crate::types::{DeviceId, HostIndex, TriggerEvent};
 
+/// How long a trigger device that may only have fallen asleep is given before
+/// the monitor is asked where the screen is (spec §5, D12).
+///
+/// macOS never sees the Easy-Switch keypress itself, so a user who comes back
+/// after a long break and presses it straight away looks exactly like a
+/// keyboard dropping Bluetooth to save power. What tells them apart is the
+/// other Mac pulling the screen: the keyboard takes about 1.7 s to connect
+/// there, that Mac debounces for 0.8 s before writing the input, and for about
+/// a second after the write the display does not read back reliably. So the
+/// answer is good from about 4.5 s on; five seconds leaves a little slack.
+pub(crate) const SLEEP_CHECK_DELAY: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
@@ -38,6 +50,16 @@ pub enum State {
         /// The trigger device that bounced back to this machine while the
         /// switch to `target` was running; see [`State::Cooldown::returning`].
         returning: Option<DeviceId>,
+    },
+    /// A trigger device disconnected while this Mac had been idle so long that
+    /// it may only have fallen asleep. At `deadline` the runtime asks the
+    /// monitor where the screen is: on another host means the user pressed
+    /// Easy-Switch and went there, so the following devices go after it;
+    /// anywhere else (here, or no answer) means the device is asleep, and
+    /// nothing moves. The same device coming back first ends the check.
+    SleepCheck {
+        trigger: DeviceId,
+        deadline: Instant,
     },
     /// Settling after a switch; every trigger is ignored until `until`.
     Cooldown {
@@ -71,6 +93,11 @@ pub enum Event {
     TimerFired,
     /// The switch started by [`Action::StartSwitch`] ran to completion.
     SwitchFinished,
+    /// A trigger device left while this Mac had been idle long enough that it
+    /// may only have fallen asleep (spec §5, D12). The runtime sends it in
+    /// place of `Trigger(DeviceLeft)`, and only while `Idle`; anywhere else it
+    /// is taken for the plain departure it would otherwise have been.
+    SuspectedSleep(DeviceId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,6 +129,11 @@ pub struct Coordinator {
     /// answer — falls back to `last_target`. [`Coordinator::pull_verdict`]
     /// takes it, so one reading decides one pull and can never go stale.
     screen_here: Option<bool>,
+    /// Which host the first display was showing when the runtime last asked
+    /// at the end of a sleep check, set through
+    /// [`Coordinator::observe_screen_at`]. Taken by the check that expires
+    /// next, like `screen_here`, so it cannot go stale.
+    screen_at: Option<HostIndex>,
 }
 
 impl Coordinator {
@@ -112,6 +144,7 @@ impl Coordinator {
             cfg,
             last_target: None,
             screen_here: None,
+            screen_at: None,
         }
     }
 
@@ -130,8 +163,26 @@ impl Coordinator {
         self.screen_here = here;
     }
 
+    /// Which host the first display is showing at the moment the sleep check
+    /// expires; `None` = unreadable / unmapped.
+    ///
+    /// One-shot, like [`Coordinator::observe_screen`]: the next sleep check
+    /// to expire consumes it.
+    pub fn observe_screen_at(&mut self, host: Option<HostIndex>) {
+        self.screen_at = host;
+    }
+
     /// Applies one event and returns the one action the caller must perform.
     pub fn handle(&mut self, ev: Event, now: Instant) -> Action {
+        // A suspected sleep only means something to an idle machine. Anywhere
+        // else the departure is part of something already under way, and a
+        // leave must still beat a pull or clear a pending return.
+        let ev = match ev {
+            Event::SuspectedSleep(id) if self.state != State::Idle => {
+                Event::Trigger(TriggerEvent::DeviceLeft(id))
+            }
+            ev => ev,
+        };
         let state = std::mem::replace(&mut self.state, State::Idle);
         let (next, action) = match (state, ev) {
             (State::Idle, Event::Trigger(TriggerEvent::DeviceLeft(id))) => {
@@ -167,7 +218,28 @@ impl Coordinator {
                     Err(reason) => (State::Idle, Action::Ignore(reason)),
                 }
             }
-            (State::Idle, Event::Trigger(TriggerEvent::Manual { target, .. })) => {
+            // The device may only have fallen asleep. Whether it did is
+            // settled when the check expires, by where the screen is then.
+            (State::Idle, Event::SuspectedSleep(id)) => {
+                if self.is_trigger(&id) {
+                    let deadline = now + SLEEP_CHECK_DELAY;
+                    (
+                        State::SleepCheck {
+                            trigger: id,
+                            deadline,
+                        },
+                        Action::ArmTimer(deadline),
+                    )
+                } else {
+                    (State::Idle, Action::Ignore("not a trigger device"))
+                }
+            }
+            // A sleep check is a guess about an idle machine; the user asking
+            // for a switch outranks it, exactly as in `Idle`.
+            (
+                state @ (State::Idle | State::SleepCheck { .. }),
+                Event::Trigger(TriggerEvent::Manual { target, .. }),
+            ) => {
                 // Never start a switch to a slot that may be unpaired.
                 if self.cfg.has_host(target) {
                     (
@@ -181,7 +253,44 @@ impl Coordinator {
                         },
                     )
                 } else {
-                    (State::Idle, Action::Ignore("target not declared"))
+                    (state, Action::Ignore("target not declared"))
+                }
+            }
+            // It came back before the check expired: it only blinked, or woke
+            // up. Nothing left.
+            (
+                State::SleepCheck { trigger, deadline },
+                Event::Trigger(TriggerEvent::DeviceArrived(id)),
+            ) => {
+                if id == trigger {
+                    (State::Idle, Action::CancelTimer)
+                } else {
+                    (
+                        State::SleepCheck { trigger, deadline },
+                        Action::Ignore("a different device arrived"),
+                    )
+                }
+            }
+            (State::SleepCheck { trigger, deadline }, Event::TimerFired) => {
+                if now >= deadline {
+                    match self.sleep_verdict() {
+                        Ok(target) => (
+                            State::Switching {
+                                target,
+                                returning: None,
+                            },
+                            Action::StartSwitch {
+                                target,
+                                manual: false,
+                            },
+                        ),
+                        Err(reason) => (State::Idle, Action::Ignore(reason)),
+                    }
+                } else {
+                    (
+                        State::SleepCheck { trigger, deadline },
+                        Action::Ignore("timer fired before deadline"),
+                    )
                 }
             }
             (
@@ -499,6 +608,22 @@ impl Coordinator {
         }
     }
 
+    /// The sleep check has expired: the host the following devices must go to,
+    /// or the reason they stay (spec §5, D12).
+    fn sleep_verdict(&mut self) -> Result<HostIndex, &'static str> {
+        // One reading answers one check, whatever we decide below.
+        match self.screen_at.take() {
+            // Another Mac pulled the screen: the user pressed Easy-Switch and
+            // went there. The screen says where more surely than `leave_to`
+            // can guess.
+            Some(host) if host != self.cfg.this_host && self.cfg.has_host(host) => Ok(host),
+            // Never send anything to a slot that may be unpaired.
+            Some(host) if host != self.cfg.this_host => Err("the screen is on an undeclared host"),
+            // Still here, or no answer: no evidence anyone left.
+            _ => Err("the screen is still here; the device is asleep"),
+        }
+    }
+
     /// `id` arrived on this machine: it arms the pending return when it is a
     /// trigger device, nothing is armed yet, and there is something to come
     /// back from (`away`). The first device to arm it keeps it.
@@ -535,6 +660,7 @@ fn ignored_because(state: &State) -> &'static str {
     match state {
         State::Idle => "nothing to do while idle",
         State::Confirming { .. } => "waiting out the debounce",
+        State::SleepCheck { .. } => "checking where the screen is",
         State::Switching { .. } => "a switch is in progress",
         State::Cooldown { .. } => "cooling down after a switch",
     }
@@ -1672,5 +1798,326 @@ mod tests {
                 manual: false
             }
         );
+    }
+
+    // ---- The sleep check (spec §5, D12) ----
+
+    /// The keyboard disconnects while this Mac has been idle for long enough
+    /// that it may only have fallen asleep: the check that settles it.
+    fn into_sleep_check(c: &mut Coordinator, now: Instant) -> Instant {
+        let action = c.handle(Event::SuspectedSleep(keyboard()), now);
+        let deadline = now + SLEEP_CHECK_DELAY;
+        assert_eq!(action, Action::ArmTimer(deadline));
+        deadline
+    }
+
+    #[test]
+    fn a_trigger_that_may_be_asleep_starts_a_sleep_check() {
+        let (mut c, now) = coordinator();
+        let action = c.handle(Event::SuspectedSleep(keyboard()), now);
+        let deadline = now + Duration::from_secs(5);
+        assert_eq!(action, Action::ArmTimer(deadline));
+        assert_eq!(
+            c.state(),
+            &State::SleepCheck {
+                trigger: keyboard(),
+                deadline,
+            }
+        );
+    }
+
+    #[test]
+    fn a_follower_that_may_be_asleep_is_ignored() {
+        let (mut c, now) = coordinator();
+        let action = c.handle(Event::SuspectedSleep(mouse()), now);
+        assert_eq!(action, Action::Ignore("not a trigger device"));
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    /// It was only a blip, or the keyboard woke up: nothing left.
+    #[test]
+    fn the_same_trigger_coming_back_ends_the_sleep_check() {
+        let (mut c, now) = coordinator();
+        into_sleep_check(&mut c, now);
+        let action = c.handle(
+            Event::Trigger(TriggerEvent::DeviceArrived(keyboard())),
+            now + Duration::from_secs(3),
+        );
+        assert_eq!(action, Action::CancelTimer);
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    /// Any other arrival or departure leaves the check exactly as it was.
+    #[test]
+    fn other_devices_do_not_disturb_the_sleep_check() {
+        let (mut c, now) = coordinator_with_a_second_trigger();
+        let deadline = into_sleep_check(&mut c, now);
+        let checking = State::SleepCheck {
+            trigger: keyboard(),
+            deadline,
+        };
+        for event in [
+            TriggerEvent::DeviceArrived(mouse()),
+            TriggerEvent::DeviceLeft(mouse()),
+            TriggerEvent::DeviceArrived(second_trigger()),
+            TriggerEvent::DeviceLeft(second_trigger()),
+            // A repeated notification of the departure that started it.
+            TriggerEvent::DeviceLeft(keyboard()),
+        ] {
+            let action = c.handle(Event::Trigger(event.clone()), now + Duration::from_secs(1));
+            assert!(matches!(action, Action::Ignore(_)), "{event:?}: {action:?}");
+            assert_eq!(c.state(), &checking, "{event:?}");
+        }
+    }
+
+    /// A manual switch wins: the sleep check takes it exactly as `Idle` would.
+    #[test]
+    fn a_manual_switch_during_the_sleep_check_switches_at_once() {
+        let manual = Event::Trigger(TriggerEvent::Manual {
+            target: 1,
+            source: "hotkey",
+        });
+        let (mut idle, now) = coordinator();
+        let expected = idle.handle(manual.clone(), now);
+
+        let (mut c, now) = coordinator();
+        into_sleep_check(&mut c, now);
+        let action = c.handle(manual, now + Duration::from_secs(1));
+        assert_eq!(action, expected);
+        assert_eq!(
+            action,
+            Action::StartSwitch {
+                target: 1,
+                manual: true
+            }
+        );
+        assert_eq!(c.state(), idle.state());
+    }
+
+    /// A manual switch to a slot that may be unpaired is refused here as in
+    /// `Idle`; the check it interrupted carries on.
+    #[test]
+    fn a_manual_switch_to_an_undeclared_host_does_not_end_the_sleep_check() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        let action = c.handle(
+            Event::Trigger(TriggerEvent::Manual {
+                target: 7,
+                source: "cli",
+            }),
+            now + Duration::from_secs(1),
+        );
+        assert_eq!(action, Action::Ignore("target not declared"));
+        assert_eq!(
+            c.state(),
+            &State::SleepCheck {
+                trigger: keyboard(),
+                deadline,
+            }
+        );
+    }
+
+    /// The other Mac pulled the screen while the keyboard was "asleep": the
+    /// user really left, and the following devices go to where the screen is.
+    #[test]
+    fn the_screen_on_another_host_sends_everything_after_it() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(1));
+        let action = c.handle(Event::TimerFired, deadline);
+        assert_eq!(
+            action,
+            Action::StartSwitch {
+                target: 1,
+                manual: false
+            }
+        );
+        assert!(matches!(c.state(), State::Switching { target: 1, .. }));
+    }
+
+    /// With three hosts the screen decides where things go, not `leave_to`.
+    #[test]
+    fn the_screen_beats_the_leave_target() {
+        let mut cfg = three_host_config();
+        cfg.devices[0].leave_to = Some(2);
+        let (mut c, now) = (Coordinator::new(cfg), Instant::now());
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(1));
+        assert_eq!(
+            c.handle(Event::TimerFired, deadline),
+            Action::StartSwitch {
+                target: 1,
+                manual: false
+            }
+        );
+    }
+
+    #[test]
+    fn the_screen_still_here_means_the_device_is_asleep() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(0));
+        let action = c.handle(Event::TimerFired, deadline);
+        assert_eq!(
+            action,
+            Action::Ignore("the screen is still here; the device is asleep")
+        );
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    /// No reading is no evidence of a departure.
+    #[test]
+    fn an_unreadable_screen_means_the_device_is_asleep() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(None);
+        let action = c.handle(Event::TimerFired, deadline);
+        assert_eq!(
+            action,
+            Action::Ignore("the screen is still here; the device is asleep")
+        );
+        assert_eq!(c.state(), &State::Idle);
+
+        // Never asked at all: the same.
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        assert!(matches!(
+            c.handle(Event::TimerFired, deadline),
+            Action::Ignore(_)
+        ));
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    /// Nothing is ever switched to a slot that may be unpaired, whatever the
+    /// monitor's mapping says.
+    #[test]
+    fn the_screen_on_an_undeclared_host_moves_nothing() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(2));
+        assert!(matches!(
+            c.handle(Event::TimerFired, deadline),
+            Action::Ignore(_)
+        ));
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    #[test]
+    fn a_stale_timer_before_the_sleep_check_deadline_keeps_checking() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(1));
+        let action = c.handle(Event::TimerFired, deadline - Duration::from_millis(1));
+        assert_eq!(action, Action::Ignore("timer fired before deadline"));
+        assert_eq!(
+            c.state(),
+            &State::SleepCheck {
+                trigger: keyboard(),
+                deadline,
+            }
+        );
+    }
+
+    /// The switch a sleep check starts is an ordinary one: it cools down, and
+    /// `last_target` records where it sent everything, so the keyboard
+    /// turning up here later pulls them home.
+    #[test]
+    fn a_switch_after_a_sleep_check_is_remembered_like_any_other() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(1));
+        c.handle(Event::TimerFired, deadline);
+        let finished = deadline + Duration::from_millis(100);
+        let action = c.handle(Event::SwitchFinished, finished);
+        let until = finished + Duration::from_millis(5000);
+        assert_eq!(action, Action::ArmTimer(until));
+        c.handle(Event::TimerFired, until);
+        assert_eq!(c.state(), &State::Idle);
+
+        let action = arrival_verdict(&mut c, until + Duration::from_millis(10));
+        assert_eq!(
+            action,
+            Action::StartSwitch {
+                target: 0,
+                manual: false
+            },
+            "the last switch went to host 1, so the fallback pulls"
+        );
+    }
+
+    /// One reading decides one sleep check.
+    #[test]
+    fn a_sleep_check_observation_is_used_once() {
+        let (mut c, now) = coordinator();
+        let deadline = into_sleep_check(&mut c, now);
+        c.observe_screen_at(Some(1));
+        c.handle(Event::TimerFired, deadline);
+        let finished = deadline + Duration::from_millis(100);
+        c.handle(Event::SwitchFinished, finished);
+        let idle = finished + Duration::from_millis(5000);
+        c.handle(Event::TimerFired, idle);
+        assert_eq!(c.state(), &State::Idle);
+
+        // A second check with no fresh reading: a stale `Some(1)` would
+        // switch all over again.
+        let deadline = into_sleep_check(&mut c, idle + Duration::from_secs(60));
+        assert!(matches!(
+            c.handle(Event::TimerFired, deadline),
+            Action::Ignore(_)
+        ));
+        assert_eq!(c.state(), &State::Idle);
+    }
+
+    /// The runtime only sends `SuspectedSleep` while idle. Anywhere else it is
+    /// a departure like any other, so a leave still beats a pull and still
+    /// clears a pending return.
+    #[test]
+    fn a_suspected_sleep_outside_idle_is_a_departure() {
+        /// Two coordinators driven identically, on the same clock.
+        fn twins(drive: impl Fn(&mut Coordinator, Instant)) -> (Coordinator, Coordinator, Instant) {
+            let now = Instant::now();
+            let [mut a, mut b] = [0, 1].map(|_| Coordinator::new(two_host_config()));
+            drive(&mut a, now);
+            drive(&mut b, now);
+            (a, b, now)
+        }
+        /// Drives a fresh coordinator into the state under test.
+        type Drive = fn(&mut Coordinator, Instant);
+        let scenarios: [(&str, Drive); 4] = [
+            ("leave debounce", |c, now| {
+                c.handle(Event::Trigger(TriggerEvent::DeviceLeft(keyboard())), now);
+            }),
+            ("arrival debounce", |c, now| {
+                c.handle(Event::Trigger(TriggerEvent::DeviceArrived(keyboard())), now);
+            }),
+            ("switching with a pending return", |c, now| {
+                c.handle(Event::Trigger(TriggerEvent::DeviceLeft(keyboard())), now);
+                c.handle(Event::TimerFired, now + Duration::from_millis(800));
+                c.handle(
+                    Event::Trigger(TriggerEvent::DeviceArrived(keyboard())),
+                    now + Duration::from_millis(850),
+                );
+            }),
+            ("cooldown with a pending return", |c, now| {
+                let finished = into_cooldown(c, now);
+                c.handle(
+                    Event::Trigger(TriggerEvent::DeviceArrived(keyboard())),
+                    finished + Duration::from_millis(10),
+                );
+            }),
+        ];
+        for (name, drive) in scenarios {
+            let (mut suspected, mut left, now) = twins(drive);
+            let at = now + Duration::from_millis(900);
+            let got = suspected.handle(Event::SuspectedSleep(keyboard()), at);
+            let want = left.handle(Event::Trigger(TriggerEvent::DeviceLeft(keyboard())), at);
+            assert_eq!(got, want, "{name}");
+            assert_eq!(suspected.state(), left.state(), "{name}");
+            assert!(
+                !matches!(suspected.state(), State::SleepCheck { .. }),
+                "{name}: {:?}",
+                suspected.state()
+            );
+        }
     }
 }

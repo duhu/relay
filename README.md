@@ -42,7 +42,9 @@ Two rules make this safe with more than one Relay running:
 
 - **Only the departure side pushes.** A Mac acts on *its own* keyboard leaving, never
   on a guess about the others. A keyboard that drops Bluetooth on its own after sitting
-  idle is not leaving: if nobody has touched this Mac for ten minutes, Relay stays put.
+  idle is not taken at its word: if nobody has touched this Mac for ten minutes, Relay
+  waits five seconds and looks at the monitor. Only if another Mac has taken the picture
+  meanwhile does the mouse follow it there; otherwise the keyboard just fell asleep.
 - **The arrival side asks the monitor.** When the keyboard shows up, that Mac reads
   the monitor's current input source before doing anything. If the picture is already
   here, it does nothing. This is what makes it work when the other Mac is asleep, or

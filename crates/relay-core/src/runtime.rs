@@ -22,7 +22,7 @@ use crate::buttons::tap::ButtonRemapper;
 use crate::buttons::ButtonMap;
 use crate::config::{Config, ConfigError, Language};
 use crate::config_watch;
-use crate::coordinator::{Action, Coordinator, Event, State};
+use crate::coordinator::{Action, Coordinator, Event, State, SLEEP_CHECK_DELAY};
 use crate::device::logitech::LogitechHidpp;
 use crate::device::HostSwitchable;
 use crate::display::ddc::DdcDisplay;
@@ -37,7 +37,8 @@ use crate::types::{DeviceId, HostIndex, TriggerEvent};
 /// Everything the tray and the settings window show.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Status {
-    /// `Idle`, `Confirming`, `Switching`, `Cooldown` or `Unconfigured`.
+    /// `Idle`, `Confirming`, `Switching`, `Cooldown` or `Unconfigured`. A
+    /// sleep check (spec §5, D12) reports `Confirming`.
     pub state: String,
     pub config_ok: bool,
     pub config_error: Option<String>,
@@ -74,7 +75,8 @@ impl Status {
 
 const STATE_UNCONFIGURED: &str = "Unconfigured";
 
-/// How long the pull decision waits for the monitor.
+/// How long the decision read waits for the monitor (an arrival's pull, or a
+/// sleep check).
 ///
 /// The read itself may take up to [`DdcDisplay`]'s own eight seconds, a budget
 /// sized for a retried *write*; but this one is awaited inside the loop, so
@@ -89,19 +91,40 @@ const STATE_UNCONFIGURED: &str = "Unconfigured";
 /// answer is worth no more than none: either way the fallback rule decides.
 const DECISION_READ_TIMEOUT: Duration = Duration::from_millis(1_500);
 
-/// A trigger device that disconnects after this long without input is asleep, not gone.
+/// A trigger device that disconnects after this long without input may only
+/// have fallen asleep, and gets a sleep check instead of a leave.
 ///
 /// Logitech devices drop Bluetooth by themselves after a long idle stretch,
 /// and the device layer cannot tell that from Easy-Switch (spec §5, D12). Ten
 /// minutes matches the display going to sleep: with the screen dark, nobody
-/// just pressed a key to leave.
+/// just pressed a key to leave — or if they did, the other Mac pulling the
+/// screen is what gives it away (see [`SLEEP_CHECK_DELAY`]).
 pub(crate) const DEVICE_SLEEP_IDLE: Duration = Duration::from_secs(600);
+
+/// What a reading taken when the coordinator's timer expires has to settle.
+#[derive(Clone, Copy, Debug)]
+enum Question {
+    /// An arrival debounce: is the screen showing this host's input?
+    Pull,
+    /// A sleep check: which host's input is the screen showing?
+    SleepCheck,
+}
+
+/// A reading in the terms the coordinator takes it.
+#[derive(Clone, Copy, Debug)]
+enum Seen {
+    /// For [`Coordinator::observe_screen`].
+    Here(Option<bool>),
+    /// For [`Coordinator::observe_screen_at`].
+    At(Option<HostIndex>),
+}
 
 /// How [`Runtime::ask_the_screen`] ended.
 enum Asked {
-    /// Nobody interrupted: the reading, or `None` when the monitor would not
-    /// say (or was not there to ask, or ran out of budget).
-    Answered(Option<bool>),
+    /// Nobody interrupted: what the reading settled, which is "we could not
+    /// tell" when the monitor would not say (or was not there to ask, or ran
+    /// out of budget).
+    Answered(Seen),
     /// A device event arrived first and was handled instead of the read;
     /// `changed` is what handling it reported to the status channel.
     Interrupted { changed: bool },
@@ -438,21 +461,24 @@ impl Runtime {
                 tracing::info!(
                     device = %id,
                     idle_s = idle.as_secs(),
-                    "the device is asleep, not gone; staying put"
+                    "the device may be asleep; checking where the screen is in {} s",
+                    SLEEP_CHECK_DELAY.as_secs()
                 );
-                return false;
+                return self.handle_event(Event::SuspectedSleep(id.clone()));
             }
         }
         self.handle_event(Event::Trigger(trigger))
     }
 
     /// How long this Mac had been idle when trigger device `id` disconnected,
-    /// if that is long enough to call the disconnect sleep rather than a
-    /// departure (spec §5, D12).
+    /// if that is long enough that the disconnect may only be the device
+    /// falling asleep (spec §5, D12). The coordinator then gets a
+    /// [`Event::SuspectedSleep`] instead of the departure, and the screen
+    /// settles it.
     ///
-    /// Decided here, at the I/O boundary, so the coordinator never sees the
-    /// event at all. An unknown idle time is no evidence of sleep: the
-    /// departure then counts, as it always has.
+    /// The idle time is measured here, at the I/O boundary, so the
+    /// coordinator stays IO-free. An unknown idle time is no evidence of
+    /// sleep: the departure then counts, as it always has.
     ///
     /// Only an `Idle` machine is asked. Anywhere else the departure is part of
     /// something already under way — an arrival being debounced or a screen
@@ -477,8 +503,9 @@ impl Runtime {
         (self.idle)().filter(|idle| *idle >= DEVICE_SLEEP_IDLE)
     }
 
-    /// Would the coordinator use a reading if it had one? Only the expiry of a
-    /// debounce that a trigger device's arrival started.
+    /// Would the coordinator use a reading if its timer expired now, and what
+    /// for? Only the expiry of a debounce that a trigger device's arrival
+    /// started, and of a sleep check.
     ///
     /// The question is deliberately asked this late. The arrival itself is
     /// about a second after the *other* Mac wrote the monitor's input, and in
@@ -487,56 +514,90 @@ impl Runtime {
     /// first attempt that finds no display, and a retry that works). By the
     /// end of the debounce it has settled, and the answer is the freshest one
     /// the decision can have.
-    fn pull_needs_the_screen(&self) -> bool {
-        let Some(cfg) = self.cfg.as_ref() else {
-            return false;
-        };
-        // The coordinator's own guards — not a trigger, pull turned off —
-        // already ran when the debounce was armed, so an arrival debounce that
-        // is still standing is one whose verdict wants a reading.
-        matches!(
-            self.coordinator.as_ref().map(Coordinator::state),
-            Some(State::Confirming {
-                from_arrival: true,
-                ..
-            })
-        ) && cfg.options.pull_on_arrival
+    fn expiry_needs_the_screen(&self) -> Option<Question> {
+        let cfg = self.cfg.as_ref()?;
+        match self.coordinator.as_ref().map(Coordinator::state)? {
+            // The coordinator's own guards — not a trigger, pull turned off —
+            // already ran when the debounce was armed, so an arrival debounce
+            // that is still standing is one whose verdict wants a reading.
+            State::Confirming {
+                from_arrival: true, ..
+            } if cfg.options.pull_on_arrival => Some(Question::Pull),
+            // A sleep check is nothing but this question; `pull_on_arrival`
+            // has no say in it.
+            State::SleepCheck { .. } => Some(Question::SleepCheck),
+            _ => None,
+        }
     }
 
-    /// What the decision read needs to run on its own: the display to ask and
-    /// the input code this host is mapped to, or `None` when there is nothing
-    /// to ask.
+    /// The display the decision read asks, or `None` when there is nothing to
+    /// ask.
     ///
-    /// "The screen is here" means the **first** configured display reports the
-    /// input source this host is mapped to. One display is all a Mac can be
-    /// judged by today; deciding it from several of them is a question of its
-    /// own, left for when Relay grows a second monitor.
+    /// Where the screen is means what the **first** configured display
+    /// reports. One display is all a Mac can be judged by today; deciding it
+    /// from several of them is a question of its own, left for when Relay
+    /// grows a second monitor.
     ///
-    /// The pieces are taken out of `self` here so that the read below borrows
+    /// The adapter is taken out of `self` here so that the read below borrows
     /// nothing: it has to be raced against the trigger channel, and whoever
     /// wins that race is then handled with `&mut self`.
-    fn decision_read(&self) -> Option<(Arc<dyn DisplayInput>, u8)> {
-        // Every one of these is a reason the arrival decides without a
+    fn decision_read(&self, question: Question) -> Option<Arc<dyn DisplayInput>> {
+        // Every one of these is a reason the decision is taken without a
         // reading, and spec §5 promises that every ask is readable in the log
         // afterwards — including the asks that never happened.
         let cfg = self.cfg.as_ref()?;
         let Some(configured) = cfg.displays.first() else {
-            tracing::debug!("no display is configured; the arrival decides without a reading");
+            tracing::debug!(
+                ?question,
+                "no display is configured; deciding without a reading"
+            );
             return None;
         };
-        let Some(wanted) = configured.input_for(cfg.this_host) else {
+        if matches!(question, Question::Pull) && configured.input_for(cfg.this_host).is_none() {
             tracing::debug!(
                 host = cfg.this_host,
                 display = configured.name,
                 "this host has no input on the display; the arrival decides without a reading",
             );
             return None;
-        };
+        }
         let Some(adapter) = self.displays(cfg).into_iter().next() else {
-            tracing::debug!("no display adapter was built; the arrival decides without a reading");
+            tracing::debug!(
+                ?question,
+                "no display adapter was built; deciding without a reading"
+            );
             return None;
         };
-        Some((adapter, wanted))
+        Some(adapter)
+    }
+
+    /// What the input code the first display reported, `showing`, settles for
+    /// `question`. `None` — no answer — settles nothing either way.
+    fn interpret(&self, question: Question, showing: Option<u8>) -> Seen {
+        let cfg = self.cfg.as_ref();
+        let display = cfg.and_then(|cfg| cfg.displays.first());
+        match question {
+            // "The screen is here": the display shows this host's input.
+            Question::Pull => {
+                let wanted = cfg
+                    .zip(display)
+                    .and_then(|(cfg, d)| d.input_for(cfg.this_host));
+                Seen::Here(
+                    showing
+                        .zip(wanted)
+                        .map(|(showing, wanted)| showing == wanted),
+                )
+            }
+            // Only a declared host counts: nothing may be sent to a slot that
+            // may be unpaired, so an input mapped to anything else is as good
+            // as no answer.
+            Question::SleepCheck => Seen::At(
+                showing
+                    .zip(display)
+                    .and_then(|(showing, d)| d.host_for_input(showing))
+                    .filter(|host| cfg.is_some_and(|cfg| cfg.has_host(*host))),
+            ),
+        }
     }
 
     /// Asks the monitor where the screen is, racing the question against the
@@ -553,11 +614,17 @@ impl Runtime {
     ///
     /// So the first raw HID event abandons the read. The news is worth more
     /// than the answer, and without an answer the arrival simply falls back to
-    /// `last_target` (spec §5). When nothing interrupts, the read still gets
-    /// [`DECISION_READ_TIMEOUT`] and no more.
-    async fn ask_the_screen(&mut self, raw_rx: &mut mpsc::UnboundedReceiver<RawHidEvent>) -> Asked {
-        let Some((display, wanted)) = self.decision_read() else {
-            return Asked::Answered(None);
+    /// `last_target` (spec §5). A sleep check is raced the same way: the
+    /// keyboard waking up and coming back ends the check outright. When
+    /// nothing interrupts, the read still gets [`DECISION_READ_TIMEOUT`] and
+    /// no more.
+    async fn ask_the_screen(
+        &mut self,
+        raw_rx: &mut mpsc::UnboundedReceiver<RawHidEvent>,
+        question: Question,
+    ) -> Asked {
+        let Some(display) = self.decision_read(question) else {
+            return Asked::Answered(self.interpret(question, None));
         };
         let read = tokio::time::timeout(DECISION_READ_TIMEOUT, display.current_input());
         tokio::pin!(read);
@@ -583,16 +650,15 @@ impl Runtime {
                 }
             },
         };
-        let here = showing.map(|showing| showing == wanted);
+        let seen = self.interpret(question, showing);
         // At `info`, because this one line is what makes a skipped (or taken)
-        // pull readable in the log afterwards.
+        // pull or sleep check readable in the log afterwards.
         tracing::info!(
             read = ?showing,
-            wanted,
-            here = ?here,
+            seen = ?seen,
             "asked the monitor where the screen is"
         );
-        Asked::Answered(here)
+        Asked::Answered(seen)
     }
 
     async fn fire_timer(&mut self, raw_rx: &mut mpsc::UnboundedReceiver<RawHidEvent>) -> bool {
@@ -601,28 +667,50 @@ impl Runtime {
         // costs the display about 60 ms, and every other path (a leave, the
         // end of a cooldown, a finished switch, any hotplug of a device we do
         // not follow) decides without it.
-        if !self.pull_needs_the_screen() {
+        let Some(question) = self.expiry_needs_the_screen() else {
             return self.handle_event(Event::TimerFired);
-        }
-        let here = match self.ask_the_screen(raw_rx).await {
-            Asked::Answered(here) => here,
-            Asked::Interrupted { changed } => {
-                // The event we handled instead may have moved the machine on —
-                // a leave of its own, or straight into `Switching`. Its own
-                // action (a fresh timer, or none) stands; this expiry is spent,
-                // and the `TimerFired` it was about would only be ignored.
-                if !self.pull_needs_the_screen() {
-                    return changed;
-                }
-                // Still the same arrival debounce (another device's hotplug,
-                // say): decide it with no reading, as a mute monitor would.
-                None
-            }
         };
-        if let Some(coordinator) = self.coordinator.as_mut() {
-            coordinator.observe_screen(here);
-        }
+        let seen = match self.ask_the_screen(raw_rx, question).await {
+            Asked::Answered(seen) => seen,
+            Asked::Interrupted { changed } => match self.expiry_needs_the_screen() {
+                // The event we handled instead may have moved the machine on —
+                // a leave of its own, straight into `Switching`, or the
+                // sleeping keyboard coming back. Its own action (a fresh
+                // timer, or none) stands; this expiry is spent, and the
+                // `TimerFired` it was about would only be ignored.
+                None => return changed,
+                // Still the same debounce or check (another device's hotplug,
+                // say): decide it with no reading, as a mute monitor would.
+                Some(question) => self.interpret(question, None),
+            },
+        };
+        self.observe(seen);
         self.handle_event(Event::TimerFired)
+    }
+
+    /// Hands a reading to the coordinator just before the expiry it decides.
+    fn observe(&mut self, seen: Seen) {
+        let Some(coordinator) = self.coordinator.as_mut() else {
+            return;
+        };
+        match seen {
+            Seen::Here(here) => coordinator.observe_screen(here),
+            Seen::At(host) => {
+                // The sleep check's verdict, said where the user will look for
+                // it: why the mouse moved overnight, or why it did not.
+                let this_host = self.cfg.as_ref().map(|cfg| cfg.this_host);
+                match host {
+                    Some(host) if Some(host) != this_host => tracing::info!(
+                        "the screen moved to host {host}; sending the following devices after it"
+                    ),
+                    Some(_) => tracing::info!("the screen is still here; the device is asleep"),
+                    None => tracing::info!(
+                        "the screen could not be placed on any host; taking the device as asleep"
+                    ),
+                }
+                coordinator.observe_screen_at(host);
+            }
+        }
     }
 
     fn handle_event(&mut self, event: Event) -> bool {
@@ -922,7 +1010,10 @@ impl Runtime {
         let state = match self.coordinator.as_ref().map(Coordinator::state) {
             None => STATE_UNCONFIGURED,
             Some(State::Idle) => "Idle",
-            Some(State::Confirming { .. }) => "Confirming",
+            // A sleep check is shown as the debounce it resembles: the tray
+            // and the settings window know no other word, and "checking
+            // whether the keyboard really left" is exactly what it is doing.
+            Some(State::Confirming { .. } | State::SleepCheck { .. }) => "Confirming",
             Some(State::Switching { .. }) => "Switching",
             Some(State::Cooldown { .. }) => "Cooldown",
         };
@@ -1046,11 +1137,27 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeScreen {
         /// `None` is a display that will not say — the default everywhere, so
-        /// the tests that predate the read keep their old behaviour.
-        code: Option<u8>,
+        /// the tests that predate the read keep their old behaviour. Shared,
+        /// so a test can move the screen while the core runs.
+        code: Arc<Mutex<Option<u8>>>,
         /// How long the fake takes to answer; `None` answers at once.
         delay: Option<Duration>,
         reads: Arc<AtomicUsize>,
+    }
+
+    impl FakeScreen {
+        fn showing(code: Option<u8>, delay: Option<Duration>) -> Self {
+            FakeScreen {
+                code: Arc::new(Mutex::new(code)),
+                delay,
+                reads: Arc::default(),
+            }
+        }
+
+        /// Another Mac wrote the monitor's input (or it stopped answering).
+        fn show(&self, code: Option<u8>) {
+            *self.code.lock().expect("fake screen") = code;
+        }
     }
 
     struct FakeDisplay {
@@ -1081,7 +1188,7 @@ mod tests {
             if let Some(delay) = self.screen.delay {
                 tokio::time::sleep(delay).await;
             }
-            self.screen.code
+            *self.screen.code.lock().expect("fake screen")
         }
     }
 
@@ -1226,22 +1333,22 @@ mod tests {
     /// The same, with a monitor that answers `code` when asked which input it
     /// is showing.
     fn start_with_screen_at(config: Config, code: u8) -> Harness {
-        let screen = FakeScreen {
-            code: Some(code),
-            delay: None,
-            reads: Arc::default(),
-        };
-        start_with_devices(Some(config), None, false, screen)
+        start_with_devices(
+            Some(config),
+            None,
+            false,
+            FakeScreen::showing(Some(code), None),
+        )
     }
 
     /// The same, with a monitor that takes `delay` to answer.
     fn start_with_slow_screen_at(config: Config, code: u8, delay: Duration) -> Harness {
-        let screen = FakeScreen {
-            code: Some(code),
-            delay: Some(delay),
-            reads: Arc::default(),
-        };
-        start_with_devices(Some(config), None, false, screen)
+        start_with_devices(
+            Some(config),
+            None,
+            false,
+            FakeScreen::showing(Some(code), Some(delay)),
+        )
     }
 
     fn start_with_devices(
@@ -1350,21 +1457,46 @@ mod tests {
     }
 
     /// The nightly bug (spec §5, D12): the keyboard drops Bluetooth by itself
-    /// two hours into the night. Nobody left, so nothing may move.
+    /// two hours into the night. That is not taken for a departure: the core
+    /// waits out the sleep check, the monitor has nothing to say (the default
+    /// fake will not answer), and nothing moves.
     #[tokio::test(start_paused = true)]
     async fn a_trigger_that_fell_asleep_does_not_leave() {
         let h = start(Some(two_host_config()), None);
 
         the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
 
-        assert_nothing_moved(&h).await;
+        assert_checking_where_the_screen_is(&h).await;
         assert!(
-            h.handle
-                .logs()
-                .iter()
-                .any(|entry| entry.message.contains("asleep")),
-            "the log says why the departure was ignored"
+            logged(
+                &h,
+                "the device may be asleep; checking where the screen is in 5 s"
+            ),
+            "the log says why the departure was not acted on"
         );
+        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
+        assert_nothing_moved(&h).await;
+    }
+
+    /// 900 ms after the keyboard went, a leave debounce would long have run
+    /// out into a switch. Still `Confirming` with nothing called means the
+    /// sleep check is waiting.
+    async fn assert_checking_where_the_screen_is(h: &Harness) {
+        let status = h.handle.status().await;
+        assert_eq!(
+            status.state, "Confirming",
+            "a sleep check is shown as Confirming"
+        );
+        assert!(status.last_report.is_none(), "nothing was switched");
+        assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
+    }
+
+    /// Does the core's log hold a line containing `needle`?
+    fn logged(h: &Harness, needle: &str) -> bool {
+        h.handle
+            .logs()
+            .iter()
+            .any(|entry| entry.message.contains(needle))
     }
 
     /// The keyboard has left: the screen and the mouse went to host 1, the
@@ -1408,6 +1540,8 @@ mod tests {
 
         the_keyboard_leaves_after(&h, Some(Duration::from_secs(600))).await;
 
+        assert_checking_where_the_screen_is(&h).await;
+        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
         assert_nothing_moved(&h).await;
     }
 
@@ -1450,6 +1584,128 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(900)).await;
 
         assert_the_keyboard_left(&h).await;
+    }
+
+    /// The hole the sleep check closes (spec §5, D12): the user comes back
+    /// after a long break and presses Easy-Switch without touching anything
+    /// else. To this Mac that is a keyboard falling asleep — but five seconds
+    /// later the other Mac has pulled the screen, so the mouse goes there too.
+    #[tokio::test(start_paused = true)]
+    async fn a_sleeping_trigger_whose_screen_moved_sends_the_mouse_after_it() {
+        let gate = Arc::new(Semaphore::new(0));
+        let h = start_with_devices(
+            Some(two_host_config()),
+            Some(gate.clone()),
+            false,
+            FakeScreen::showing(Some(17), None),
+        );
+
+        // The arrivals' own pull finds the screen here and does nothing.
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
+        assert_checking_where_the_screen_is(&h).await;
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            1,
+            "only the arrival read"
+        );
+
+        // The other Mac's pull lands while the check is waiting.
+        h.screen.show(Some(18));
+        tokio::time::sleep(Duration::from_millis(3_900)).await;
+        assert_checking_where_the_screen_is(&h).await;
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            1,
+            "not asked before the deadline"
+        );
+
+        // The check expires (5 s after the leave): one read, and the switch
+        // towards the screen starts.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            2,
+            "one read at the deadline"
+        );
+        assert_eq!(h.handle.status().await.state, "Switching");
+        assert!(logged(
+            &h,
+            "the screen moved to host 1; sending the following devices after it"
+        ));
+
+        gate.add_permits(1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let status = h.handle.status().await;
+        assert_eq!(status.state, "Cooldown");
+        let report = status.last_report.expect("a report");
+        assert_eq!(report.target, 1, "everything went where the screen is");
+        assert!(report.ok, "{report:?}");
+        assert_eq!(
+            h.calls.calls(),
+            vec![
+                "display AOC U2790R3B set_input 18",
+                "device MX Master 3 host_info",
+                "device MX Master 3 switch_to_host 1",
+            ],
+        );
+    }
+
+    /// The other half: the screen never left. The keyboard is asleep.
+    #[tokio::test(start_paused = true)]
+    async fn a_sleeping_trigger_whose_screen_stayed_moves_nothing() {
+        let h = start_with_screen_at(two_host_config(), 17);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
+        assert_checking_where_the_screen_is(&h).await;
+        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
+
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            2,
+            "the arrival's and the check's"
+        );
+        assert_nothing_moved(&h).await;
+        assert!(logged(&h, "the screen is still here; the device is asleep"));
+    }
+
+    /// A monitor that will not say is no evidence anyone left.
+    #[tokio::test(start_paused = true)]
+    async fn a_sleeping_trigger_with_a_mute_monitor_moves_nothing() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
+        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
+
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            2,
+            "the arrival's and the check's"
+        );
+        assert_nothing_moved(&h).await;
+        assert!(logged(&h, "the screen could not be placed on any host"));
+    }
+
+    /// The keyboard was only blinking, or woke up: it is back before the check
+    /// expires, which ends it — even though the screen has moved meanwhile,
+    /// the monitor is never asked.
+    #[tokio::test(start_paused = true)]
+    async fn a_sleeping_trigger_that_comes_back_ends_the_check() {
+        let h = start_with_screen_at(two_host_config(), 17);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
+        h.screen.show(Some(18));
+        tokio::time::sleep(Duration::from_millis(2_100)).await;
+        h.raw.send(added(3, KEYBOARD_ID)).expect("send");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(h.handle.status().await.state, "Idle");
+
+        tokio::time::sleep(SLEEP_CHECK_DELAY).await;
+        assert_nothing_moved(&h).await;
+        assert_eq!(
+            h.screen.reads.load(Ordering::SeqCst),
+            1,
+            "only the first arrival's read; the check never asked"
+        );
     }
 
     /// The bounce-back path end to end: the keyboard failed to reach the other

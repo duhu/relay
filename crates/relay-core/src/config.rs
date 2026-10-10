@@ -72,6 +72,18 @@ impl DisplayConfig {
     pub fn input_for(&self, host: HostIndex) -> Option<u8> {
         self.input_by_host.get(&host.to_string()).copied()
     }
+
+    /// The host whose input source `code` is on this display: the reverse of
+    /// [`DisplayConfig::input_for`], for telling which Mac the screen is on.
+    /// `validate` keeps the codes on one display distinct; should two hosts
+    /// share one anyway, the lowest index wins.
+    pub fn host_for_input(&self, code: u8) -> Option<HostIndex> {
+        self.input_by_host
+            .iter()
+            .filter(|(_, &input)| input == code)
+            .filter_map(|(host, _)| host.parse().ok())
+            .min()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -995,6 +1007,28 @@ mod tests {
 
         cfg.displays[1].name = "AOC twin".to_string();
         cfg.validate().expect("distinct names are valid");
+    }
+
+    /// The sleep check reads the mapping backwards: which host is the screen on?
+    #[test]
+    fn an_input_code_maps_back_to_its_host() {
+        let display = spec_config().displays[0].clone();
+        assert_eq!(display.host_for_input(17), Some(0));
+        assert_eq!(display.host_for_input(18), Some(1));
+        assert_eq!(display.host_for_input(15), None, "no host shows this input");
+    }
+
+    /// `validate` forbids two hosts on one code, but the lookup must still
+    /// give one answer: the lowest index, compared as a number.
+    #[test]
+    fn a_shared_input_code_maps_back_to_the_lowest_host() {
+        let mut display = spec_config().displays[0].clone();
+        display.input_by_host = BTreeMap::from([
+            ("10".to_string(), 18),
+            ("2".to_string(), 18),
+            ("not a host".to_string(), 18),
+        ]);
+        assert_eq!(display.host_for_input(18), Some(2));
     }
 
     #[test]
