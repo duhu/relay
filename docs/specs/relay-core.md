@@ -19,6 +19,7 @@
 | D9 | 运行形态参考 AskHuman：默认静默常驻，设置窗口按需呼出，单二进制多角色 | 用户确认 |
 | D10 | 一台设备只能是「触发」或「跟随」之一（2026-09-20 用户拍板，不加开关） | 「按鼠标也能带走键盘」的双向用法需要设备同时担任两角，但键盘能否被遥控切换（HID++ ChangeHost）从未验证过——日志里键盘永远是 `already at target`；前提不成立时该选项没有价值 |
 | D11 | 输入源改为从显示器报上来的清单里按名字选，界面不显示编号；「现在显示的」那个用 `<optgroup>` 分组标题标出，不写进选项文字 | 编号（16/17/18）对用户没有意义，当初配笔记本时只能靠试。显示器自己知道它有几个口：AOC 答 `60(0F 10 11 12)`，四选一。名字用 MCCS 标准名，**不是机身上印的字**——哪个物理口是 "DisplayPort 1" 显示器不说，靠「现在显示的」补上。标记不写进选项文字，是因为收起来的 `<select>` 框宽度固定：`DisplayPort 2 · 当前` 在 136px 里放不下，而分组标题只在展开时出现 |
+| D12 | 触发设备断开时本机已闲置 ≥10 分钟（`DEVICE_SLEEP_IDLE`，常量，不进配置）→ 算设备省电睡眠，不算离开；闲置时长读不出来照常离开（2026-10-10 用户拍板） | 罗技键鼠闲置约 2 小时会自己断开蓝牙，设备层分不出这和按 Easy-Switch；原先每晚都把画面和鼠标送走。10 分钟与屏幕休眠一致：屏幕都黑了，不可能是刚按键离开的 |
 
 ## 1. 范围
 
@@ -103,6 +104,7 @@ Idle ─DeviceArrived(trigger)─► Confirming(debounce) ─未再离开、且�
 ```
 - debounce 默认 800ms，cooldown 默认 5s，均可配。`Clock` trait 注入，测试用手动时钟。
 - Switching：① 每个显示器 `set_input(input_by_host[target])`；② 每个 `follow=true` 设备：`host_info()`，已在目标跳过，否则 `switch_to_host(target)`。
+- **睡着不算离开**（D12）：`is_trigger` 设备的 `DeviceLeft` 到来时，runtime 先读本机闲置时长（CoreGraphics `CGEventSourceSecondsSinceLastEventType`，HID 系统级、任意输入，无需权限）；≥10 分钟就记一行 `the device is asleep, not gone; staying put`，事件**不交给** `Coordinator`。读不出来、跟随设备、到达事件、手动切换一律照旧。代价（用户已接受）：键盘睡着后直接按 Easy-Switch 去别处，本机什么也看不见，鼠标要自己按一下通道键。
 - `Switching` / `Cooldown` + `DeviceArrived(is_trigger)`：若本次切换的目标不是本机（确实切走了），记住「待返回」，并记住是哪一台设备记下的；只有同一台设备在窗口内再次离开才清除（别的设备——第二台触发设备，或被本次切换带走的 `follow` 设备——在窗口内报 `DeviceLeft` 时，不能抹掉键盘刚记下的「待返回」）。事件本身仍不打断当前切换 / 不缩短 cooldown。
 - `Cooldown` 到期（`now >= until`）且有「待返回」且 `options.switch_back_on_reconnect` → 发起 `StartSwitch { target: this_host, manual: false }`，重新进入 `Switching` → `Cooldown`；否则照常回 `Idle`。
 - `Idle` + `DeviceArrived(is_trigger)`（P3，`options.pull_on_arrival`，默认开）：**离开规则的镜像**。到达本身只进 `Confirming`（`target = this_host`）：除了「不是触发设备」和「选项关着」这两条拦在防抖之前，到达一律先防抖，此刻不问画面在哪儿。**「要不要取回」留到防抖到期那一刻再判**，分三支，依据是**画面在不在本机**（P5）：
@@ -116,7 +118,7 @@ Idle ─DeviceArrived(trigger)─► Confirming(debounce) ─未再离开、且�
 - 这条「离开压过取回」的优先级一直管到**正在问显示器的那一刻**：读显示器是在事件循环里等的，runtime 因此把这次读与 HID 事件通道**赛跑**，任何设备事件一到就当场丢掉这次读、先处理事件（读不出来正好退回兜底规则）。否则 `DeviceLeft` 会排在读后面，等轮到它时 `TimerFired` 已经把状态机推进了 `Switching（取回本机）`，而 `Switching` 里的离开只会清「待返回」——本机就会把画面抢过来并留住，而键盘在对面。
 - 两条到达规则不重叠：P1 的「待返回」只在本机自己刚切走的 `Switching` / `Cooldown` 窗口里生效，P3/P5 的取回只在 `Idle` 里生效；显示器的观测同样只影响 `Idle` 这一条，`Switching` / `Cooldown` 里的到达照旧只走「待返回」。
 - cooldown 期间的手动切换（热键 / 托盘 / CLI）同样忽略。返回切换自己又带一段 cooldown，所以一次回连会把「按下 Easy-Switch 也不响应」的窗口拉长到两段 cooldown（默认共约 10s），期间用户有意的切换会被丢弃。
-- 执行器：**自动**计划（`manual == false`）里设备层返回「设备不在本机」时该步记为跳过（`ok = true`，detail `not on this Mac, skipped`）——对方主机已把它搬走是正常情况；手动计划（`relay switch` / 托盘 / 试切）仍是失败 `device not present`。设备层分不出「被对方主机搬走」和「关机 / 睡眠了」，两者一样算作跳过，只有日志里那一步的 detail 能看出来。
+- 执行器：**自动**计划（`manual == false`）里设备层返回「设备不在本机」时该步记为跳过（`ok = true`，detail `not on this Mac, skipped`）——对方主机已把它搬走是正常情况；手动计划（`relay switch` / 托盘 / 试切）仍是失败 `device not present`。设备层分不出「被对方主机搬走」和「关机 / 睡眠了」，两者一样算作跳过，只有日志里那一步的 detail 能看出来；触发设备自己睡着断开则在触发层就被上面「睡着不算离开」拦下，不会走到这里。
 - 目标推断：触发设备离开 → 目标 = `hosts` 中除本机外唯一者；多于一个取触发设备上的 `leave_to`（3 主机时向导要求填写）。
 - Manual：无 debounce；键盘与鼠标都发 `switch_to_host`；仍走 cooldown。
 - 每步写结构化日志：`tracing` → `~/Library/Logs/Relay/relay.log`（按天）+ 内存环形缓冲 200 条供设置页 Log 视图。

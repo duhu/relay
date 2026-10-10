@@ -68,7 +68,7 @@ relay/
     coordinator.rs    sans-IO 状态机（事件 + now → 动作）
     executor.rs       按 SwitchPlan 驱动 trait 对象：先显示器（重试 1+ddc_retries）后设备
     runtime.rs        事件循环、单定时器、切换串行化、配置仅在 Idle 时替换（mouse_buttons 例外：每次重载成功即生效，切换中也是；重载失败则保留上一份）、CoreHandle
-    trigger/          mod.rs（PresenceTracker：多 HID 节点折叠为一次 Left/Arrived）· presence.rs（IOHIDManager 回调 FFI、list_hid_devices）
+    trigger/          mod.rs（PresenceTracker：多 HID 节点折叠为一次 Left/Arrived）· presence.rs（IOHIDManager 回调 FFI、list_hid_devices）· idle.rs（本机多久没有键鼠输入）
     device/           mod.rs（HostSwitchable trait）· logitech.rs（LogitechHidpp）· discovery.rs（scan_switchable_devices）· replay_support.rs（test only）
     display/          mod.rs（DisplayInput trait）· ioav_ffi.rs（三个 IOKit 私有符号：create / write / read）· ddc.rs（IORegistry 发现 + DDC 写入，DdcTransport 测试缝）capabilities.rs（能力串 0xF3 → 它支持哪几个输入源 + MCCS 名字表）
     buttons/          把配置的鼠标键换成键盘快捷键（CGEventTap，需辅助功能权限，不碰 HID++）：mod.rs（ButtonMap，纯逻辑）· tap.rs（ButtonRemapper，relay-buttons 线程上的事件 tap）
@@ -83,7 +83,7 @@ relay/
 2. **切换顺序固定**：先显示器，后设备；设备按 `follow=true` 顺序逐个。
 3. **HID++ 句柄用完即关**；不与 Logi Options+ 长期争抢设备。
 4. **只对已声明的主机槽发 ChangeHost**；配置校验在加载时完成，非法配置拒绝启动 Coordinator 并在 tray 提示。
-5. **取回前先问显示器画面在哪儿，而且等防抖到期才问**：触发设备离开本机时动作（D4）；到达分两条互不重叠的路径——`Switching` + `Cooldown` 窗口里触发设备回来 → 冷却结束时切回本机（`options.switch_back_on_reconnect`，默认开）；`Idle` 里触发设备到达 → 先防抖，**到期那一刻**才读一次第一台显示器的当前输入源（VCP 0x60；到达那一刻不读，此时距对面写入才约 1 秒，显示器还在重新同步、常常读不准），画面在别处就把画面与跟随设备取回本机，画面已在本机就不动作（`options.pull_on_arrival`，默认开）。**画面在别处时，本机刚启动、从没切过也照样取回**。读不出来（显示器 0x60 只写 / 睡眠，或连问两次都失败、或读超过 1.5s 的决策预算）才退回旧的兜底规则：只在本机上次切换的目标是别的主机时取回，没切过就不动作。这次读只发生在这一条路径上，且预算内必须返回，不能拖住事件循环。**离开永远压过取回**：防抖期间（以及正在读显示器的那一刻）同一台触发设备再离开，不是取消取回，而是原样改走离开序列——重新起一段离开方向的防抖，把画面和跟随设备送去对面；正在进行的那次读当场丢掉，按「读不出来」处理。
+5. **取回前先问显示器画面在哪儿，而且等防抖到期才问**：触发设备离开本机时动作（D4）——但断开时本机已闲置 ≥10 分钟，视为设备省电睡眠，不算离开（D12，runtime 拦下，不进状态机）；到达分两条互不重叠的路径——`Switching` + `Cooldown` 窗口里触发设备回来 → 冷却结束时切回本机（`options.switch_back_on_reconnect`，默认开）；`Idle` 里触发设备到达 → 先防抖，**到期那一刻**才读一次第一台显示器的当前输入源（VCP 0x60；到达那一刻不读，此时距对面写入才约 1 秒，显示器还在重新同步、常常读不准），画面在别处就把画面与跟随设备取回本机，画面已在本机就不动作（`options.pull_on_arrival`，默认开）。**画面在别处时，本机刚启动、从没切过也照样取回**。读不出来（显示器 0x60 只写 / 睡眠，或连问两次都失败、或读超过 1.5s 的决策预算）才退回旧的兜底规则：只在本机上次切换的目标是别的主机时取回，没切过就不动作。这次读只发生在这一条路径上，且预算内必须返回，不能拖住事件循环。**离开永远压过取回**：防抖期间（以及正在读显示器的那一刻）同一台触发设备再离开，不是取消取回，而是原样改走离开序列——重新起一段离开方向的防抖，把画面和跟随设备送去对面；正在进行的那次读当场丢掉，按「读不出来」处理。
 6. **主机索引 0 基**，仅 UI 层 +1。
 7. **配置文件是唯一真源**（`~/Library/Application Support/Relay/config.json`），UI 改动写文件 → notify → core 重载；core 不持有 UI 状态。
 8. CLI 的 stdout 只输出结果，日志走 stderr（与 AskHuman 一致）。

@@ -31,8 +31,8 @@ use crate::executor::{run_plan, StepResult, SwitchReport};
 use crate::log::{LogBuffer, LogEntry};
 use crate::permissions;
 use crate::plan::{build_plan, PlanError, SwitchPlan};
-use crate::trigger::{presence, PresenceTracker, RawHidEvent};
-use crate::types::{HostIndex, TriggerEvent};
+use crate::trigger::{idle, presence, PresenceTracker, RawHidEvent};
+use crate::types::{DeviceId, HostIndex, TriggerEvent};
 
 /// Everything the tray and the settings window show.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -89,6 +89,14 @@ const STATE_UNCONFIGURED: &str = "Unconfigured";
 /// answer is worth no more than none: either way the fallback rule decides.
 const DECISION_READ_TIMEOUT: Duration = Duration::from_millis(1_500);
 
+/// A trigger device that disconnects after this long without input is asleep, not gone.
+///
+/// Logitech devices drop Bluetooth by themselves after a long idle stretch,
+/// and the device layer cannot tell that from Easy-Switch (spec §5, D12). Ten
+/// minutes matches the display going to sleep: with the screen dark, nobody
+/// just pressed a key to leave.
+pub(crate) const DEVICE_SLEEP_IDLE: Duration = Duration::from_secs(600);
+
 /// How [`Runtime::ask_the_screen`] ended.
 enum Asked {
     /// Nobody interrupted: the reading, or `None` when the monitor would not
@@ -128,15 +136,18 @@ enum Request {
     Reload(oneshot::Sender<Result<(), CoreError>>),
 }
 
-/// How the executor's displays and devices are built from a config.
+/// How the executor's displays and devices are built from a config, and how
+/// long this Mac has gone without input.
 ///
-/// Production uses the native adapters ([`DdcDisplay`], [`LogitechHidpp`]);
-/// tests substitute fakes. This is a test seam, not public API.
+/// Production uses the native adapters ([`DdcDisplay`], [`LogitechHidpp`]) and
+/// [`idle::seconds_since_last_input`]; tests substitute fakes. This is a test
+/// seam, not public API.
 #[doc(hidden)]
 #[derive(Clone)]
 pub struct Factories {
     pub displays: DisplayFactory,
     pub devices: DeviceFactory,
+    pub idle: IdleProbe,
 }
 
 #[doc(hidden)]
@@ -144,6 +155,11 @@ pub type DisplayFactory = Arc<dyn Fn(&Config) -> Vec<Arc<dyn DisplayInput>> + Se
 
 #[doc(hidden)]
 pub type DeviceFactory = Arc<dyn Fn(&Config) -> Vec<Arc<dyn HostSwitchable>> + Send + Sync>;
+
+/// How long this Mac has gone without keyboard or mouse input; `None` when
+/// that is unknown.
+#[doc(hidden)]
+pub type IdleProbe = Arc<dyn Fn() -> Option<Duration> + Send + Sync>;
 
 pub struct Core;
 
@@ -214,10 +230,15 @@ impl Core {
         let (status_tx, status_rx) = watch::channel(Status::unconfigured());
         let (done_tx, done_rx) = mpsc::unbounded_channel();
 
+        let idle: IdleProbe = match &factories {
+            Some(factories) => factories.idle.clone(),
+            None => Arc::new(idle::seconds_since_last_input),
+        };
         let mut runtime = Runtime {
             matcher_vendors: matcher_vendors(&config_path),
             config_path,
             factories,
+            idle,
             cfg: None,
             coordinator: None,
             config_error: None,
@@ -317,6 +338,8 @@ impl CoreHandle {
 struct Runtime {
     config_path: PathBuf,
     factories: Option<Factories>,
+    /// Asked when a trigger device leaves; see [`DEVICE_SLEEP_IDLE`].
+    idle: IdleProbe,
     /// The config the coordinator is running on; `None` while it is unusable.
     cfg: Option<Config>,
     coordinator: Option<Coordinator>,
@@ -410,7 +433,36 @@ impl Runtime {
             return false;
         };
         tracing::info!(trigger = ?trigger, "presence changed");
+        if let TriggerEvent::DeviceLeft(id) = &trigger {
+            if let Some(idle) = self.asleep_for(id) {
+                tracing::info!(
+                    device = %id,
+                    idle_s = idle.as_secs(),
+                    "the device is asleep, not gone; staying put"
+                );
+                return false;
+            }
+        }
         self.handle_event(Event::Trigger(trigger))
+    }
+
+    /// How long this Mac had been idle when trigger device `id` disconnected,
+    /// if that is long enough to call the disconnect sleep rather than a
+    /// departure (spec §5, D12).
+    ///
+    /// Decided here, at the I/O boundary, so the coordinator never sees the
+    /// event at all. An unknown idle time is no evidence of sleep: the
+    /// departure then counts, as it always has.
+    fn asleep_for(&self, id: &DeviceId) -> Option<Duration> {
+        let is_trigger = self
+            .cfg
+            .as_ref()
+            .and_then(|cfg| cfg.device(id))
+            .is_some_and(|device| device.is_trigger);
+        if !is_trigger {
+            return None;
+        }
+        (self.idle)().filter(|idle| *idle >= DEVICE_SLEEP_IDLE)
     }
 
     /// Would the coordinator use a reading if it had one? Only the expiry of a
@@ -954,6 +1006,7 @@ mod tests {
 
     use async_trait::async_trait;
     use tokio::sync::Semaphore;
+    use tracing_subscriber::layer::SubscriberExt;
 
     use crate::config::test_support::{two_host_config, KEYBOARD_ID, MOUSE_ID};
     use crate::device::{DeviceError, HostSwitchable};
@@ -1055,11 +1108,34 @@ mod tests {
         }
     }
 
+    /// What the fake idle probe answers; `Some(ZERO)` — someone is typing
+    /// right now — unless a test says otherwise, so every departure in the
+    /// tests that predate the probe is still a real one.
+    #[derive(Clone)]
+    struct FakeIdle(Arc<Mutex<Option<Duration>>>);
+
+    impl Default for FakeIdle {
+        fn default() -> Self {
+            Self(Arc::new(Mutex::new(Some(Duration::ZERO))))
+        }
+    }
+
+    impl FakeIdle {
+        fn set(&self, idle: Option<Duration>) {
+            *self.0.lock().expect("fake idle") = idle;
+        }
+
+        fn get(&self) -> Option<Duration> {
+            *self.0.lock().expect("fake idle")
+        }
+    }
+
     fn factories(
         log: &CallLog,
         gate: Option<Arc<Semaphore>>,
         panic_on_switch: bool,
         screen: FakeScreen,
+        idle: FakeIdle,
     ) -> Factories {
         let (displays_log, devices_log) = (log.clone(), log.clone());
         Factories {
@@ -1089,6 +1165,7 @@ mod tests {
                     })
                     .collect()
             }),
+            idle: Arc::new(move || idle.get()),
         }
     }
 
@@ -1109,6 +1186,7 @@ mod tests {
         config_changed: mpsc::UnboundedSender<()>,
         calls: CallLog,
         screen: FakeScreen,
+        idle: FakeIdle,
         path: PathBuf,
         _dir: tempfile::TempDir,
     }
@@ -1157,6 +1235,7 @@ mod tests {
         }
 
         let calls = CallLog::default();
+        let idle = FakeIdle::default();
         let (raw, raw_rx) = mpsc::unbounded_channel();
         let (config_changed, cfg_rx) = mpsc::unbounded_channel();
         let handle = Core::start_with(
@@ -1164,7 +1243,13 @@ mod tests {
             LogBuffer::new(50),
             raw_rx,
             cfg_rx,
-            Some(factories(&calls, gate, panic_on_switch, screen.clone())),
+            Some(factories(
+                &calls,
+                gate,
+                panic_on_switch,
+                screen.clone(),
+                idle.clone(),
+            )),
         );
 
         Harness {
@@ -1173,6 +1258,7 @@ mod tests {
             config_changed,
             calls,
             screen,
+            idle,
             path,
             _dir: dir,
         }
@@ -1221,6 +1307,83 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(4200)).await;
         assert_eq!(h.handle.status().await.state, "Idle");
         assert_eq!(h.calls.calls().len(), 3);
+    }
+
+    /// The keyboard leaving after `idle` without input, from the same start as
+    /// [`a_trigger_leaving_switches_once_the_debounce_expires`]: both devices
+    /// here, the arrivals' own debounce already run out.
+    async fn the_keyboard_leaves_after(h: &Harness, idle: Option<Duration>) {
+        h.raw.send(added(1, KEYBOARD_ID)).expect("send");
+        h.raw.send(added(2, MOUSE_ID)).expect("send");
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        assert_eq!(h.handle.status().await.state, "Idle");
+
+        h.idle.set(idle);
+        h.raw.send(RawHidEvent::Removed { node: 1 }).expect("send");
+        tokio::time::sleep(Duration::from_millis(900)).await;
+    }
+
+    /// The nightly bug (spec §5, D12): the keyboard drops Bluetooth by itself
+    /// two hours into the night. Nobody left, so nothing may move.
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_that_fell_asleep_does_not_leave() {
+        let log = LogBuffer::new(200);
+        let _subscriber =
+            tracing::subscriber::set_default(tracing_subscriber::registry().with(log.layer()));
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(2 * 60 * 60))).await;
+
+        let status = h.handle.status().await;
+        assert_eq!(status.state, "Idle");
+        assert!(status.last_report.is_none(), "nothing was switched");
+        assert!(h.calls.calls().is_empty(), "{:?}", h.calls.calls());
+        assert!(
+            log.snapshot()
+                .iter()
+                .any(|entry| entry.message.contains("asleep")),
+            "the log says why the departure was ignored"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_trigger_that_just_left_still_leaves() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, Some(Duration::from_secs(5))).await;
+
+        let status = h.handle.status().await;
+        assert_eq!(status.state, "Cooldown");
+        assert_eq!(
+            h.calls.calls(),
+            vec![
+                "display AOC U2790R3B set_input 18",
+                "device MX Master 3 host_info",
+                "device MX Master 3 switch_to_host 1",
+            ],
+        );
+        assert!(status.last_report.expect("a report").ok);
+    }
+
+    /// No idle reading is no evidence of sleep: the departure is taken at its
+    /// word, as it was before the probe existed.
+    #[tokio::test(start_paused = true)]
+    async fn an_unknown_idle_time_still_leaves() {
+        let h = start(Some(two_host_config()), None);
+
+        the_keyboard_leaves_after(&h, None).await;
+
+        let status = h.handle.status().await;
+        assert_eq!(status.state, "Cooldown");
+        assert_eq!(
+            h.calls.calls(),
+            vec![
+                "display AOC U2790R3B set_input 18",
+                "device MX Master 3 host_info",
+                "device MX Master 3 switch_to_host 1",
+            ],
+        );
+        assert!(status.last_report.expect("a report").ok);
     }
 
     /// The bounce-back path end to end: the keyboard failed to reach the other

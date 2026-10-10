@@ -69,14 +69,14 @@ impl LogBuffer {
     }
 
     /// The layer that feeds this buffer.
-    fn layer(&self) -> BufferLayer {
+    pub(crate) fn layer(&self) -> BufferLayer {
         BufferLayer {
             buffer: self.clone(),
         }
     }
 }
 
-struct BufferLayer {
+pub(crate) struct BufferLayer {
     buffer: LogBuffer,
 }
 

@@ -2,8 +2,10 @@
 //!
 //! [`presence`] is the macOS side (IOHIDManager on its own run loop); this
 //! module is the pure half that turns its raw node events into the
-//! [`TriggerEvent`]s the coordinator understands.
+//! [`TriggerEvent`]s the coordinator understands. [`idle`] tells a device
+//! that fell asleep from one that left.
 
+pub mod idle;
 pub mod presence;
 
 use std::collections::HashMap;
