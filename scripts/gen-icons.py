@@ -79,6 +79,74 @@ def sd_capsule(px, py, ax, ay, bx, by, radius):
     return math.hypot(pax - bax * t, pay - bay * t) - radius
 
 
+def sd_triangle(px, py, a, b, c):
+    """Signed distance to the triangle a-b-c (any winding)."""
+
+    def seg(p, q):  # squared distance from (px, py) to segment p-q, plus the side sign
+        ex, ey = q[0] - p[0], q[1] - p[1]
+        wx, wy = px - p[0], py - p[1]
+        t = max(0.0, min(1.0, (wx * ex + wy * ey) / (ex * ex + ey * ey)))
+        dx, dy = wx - ex * t, wy - ey * t
+        return dx * dx + dy * dy, ex * wy - ey * wx
+
+    d0, s0 = seg(a, b)
+    d1, s1 = seg(b, c)
+    d2, s2 = seg(c, a)
+    d = math.sqrt(min(d0, d1, d2))
+    inside = (s0 >= 0 and s1 >= 0 and s2 >= 0) or (s0 <= 0 and s1 <= 0 and s2 <= 0)
+    return -d if inside else d
+
+
+def quad_bezier_stroke(p0, c, p1, radius, segments=48):
+    """A stroked quadratic Bézier with round caps, as one SDF.
+
+    The curve is approximated by `segments` capsules; their union (min) is a
+    single shape, so the joints are not blended twice at the antialiased edge.
+    """
+
+    pts = []
+    for i in range(segments + 1):
+        t = i / segments
+        u = 1.0 - t
+        pts.append(
+            (
+                u * u * p0[0] + 2 * u * t * c[0] + t * t * p1[0],
+                u * u * p0[1] + 2 * u * t * c[1] + t * t * p1[1],
+            )
+        )
+    segs = [(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) for i in range(segments)]
+
+    def sdf(px, py):
+        return min(sd_capsule(px, py, ax, ay, bx, by, radius) for ax, ay, bx, by in segs)
+
+    return sdf
+
+
+def arrow_head(tip, angle, length, front=0.55, half_width=0.475):
+    """Filled triangle anchored at `tip`, pointing along `angle` (radians).
+
+    Local shape, before rotation: (front·L, 0), (-0.45L, ±half_width·L),
+    translated so the local origin sits at `tip` (the canvas mock-ups'
+    translate + rotate).
+    """
+
+    ca, sa = math.cos(angle), math.sin(angle)
+
+    def at(lx, ly):
+        return (tip[0] + lx * ca - ly * sa, tip[1] + lx * sa + ly * ca)
+
+    a = at(front * length, 0)
+    b = at(-0.45 * length, -half_width * length)
+    c = at(-0.45 * length, half_width * length)
+    return lambda p, q: sd_triangle(p, q, a, b, c)
+
+
+def sd_outline(sdf, half_width):
+    """The stroke of a shape's edge."""
+
+    return lambda p, q: abs(sdf(p, q)) - half_width
+
+
 def coverage(distance: float) -> float:
     """Antialiased inside-ness of a pixel centre at `distance` from an edge."""
 
@@ -102,17 +170,49 @@ def blend(dst: bytearray, offset: int, rgb, alpha: float) -> None:
     dst[offset + 3] = int(round(out_a * 255))
 
 
-def draw(size: int, layers) -> bytearray:
-    """Rasterise `layers` = [(rgb, sdf(px, py) -> distance), ...]."""
+def draw(size: int, layers, tile: int = 16) -> bytearray:
+    """Rasterise `layers` in order onto a transparent canvas.
+
+    A layer is `(colour, sdf)`, `(colour, sdf, alpha)` or `("erase", sdf)`.
+    `colour` is an `(r, g, b)` tuple or a function `(px, py) -> (r, g, b)`;
+    `alpha` is a constant opacity; an erase layer scales the alpha it covers
+    down (pixels are straight RGBA, so the colour is left alone).
+
+    Layers are drawn one after another, tile by tile: every SDF here is
+    1-Lipschitz, so a tile whose centre is farther from the shape than the
+    tile's half-diagonal cannot be touched and is skipped.
+    """
 
     buf = bytearray(size * size * 4)
-    for y in range(size):
-        py = y + 0.5
-        row = y * size * 4
-        for x in range(size):
-            px = x + 0.5
-            for rgb, sdf in layers:
-                blend(buf, row + x * 4, rgb, coverage(sdf(px, py)))
+    for layer in layers:
+        colour, sdf = layer[0], layer[1]
+        alpha = layer[2] if len(layer) > 2 else 1.0
+        erase = isinstance(colour, str)
+        if erase and colour != "erase":
+            raise ValueError(f"unknown layer kind {colour!r}")
+        varying = callable(colour)
+        for ty in range(0, size, tile):
+            th = min(tile, size - ty)
+            for tx in range(0, size, tile):
+                tw = min(tile, size - tx)
+                reach = math.hypot(tw, th) / 2.0 + 0.5
+                if sdf(tx + tw / 2.0, ty + th / 2.0) > reach:
+                    continue
+                for y in range(ty, ty + th):
+                    py = y + 0.5
+                    row = y * size * 4
+                    for x in range(tx, tx + tw):
+                        px = x + 0.5
+                        cov = coverage(sdf(px, py))
+                        if cov <= 0:
+                            continue
+                        offset = row + x * 4
+                        if erase:
+                            dst = buf[offset + 3]
+                            buf[offset + 3] = int(round(dst * (1.0 - cov)))
+                        else:
+                            rgb = colour(px, py) if varying else colour
+                            blend(buf, offset, rgb, cov * alpha)
     return buf
 
 
@@ -136,34 +236,65 @@ def arrow(x0, y0, x1, y1, thickness, head):
 # --- icons ------------------------------------------------------------------
 
 
-def make_source(size: int = 1024) -> None:
-    """Rounded blue square with two arrows handing off in opposite directions."""
+def rr(x, y, w, h, r):
+    """Rounded rect by its top-left corner, like canvas `roundRect`."""
 
-    bg = (43, 108, 240)
-    fg = (255, 255, 255)
-    layers = [
-        (bg, lambda p, q: sd_rounded_rect(p, q, size / 2, size / 2, size / 2, size / 2, size * 0.22)),
-    ]
-    thickness = size * 0.075
-    head = size * 0.14
-    for sdf in arrow(size * 0.26, size * 0.38, size * 0.74, size * 0.38, thickness, head):
-        layers.append((fg, sdf))
-    for sdf in arrow(size * 0.74, size * 0.62, size * 0.26, size * 0.62, thickness, head):
-        layers.append((fg, sdf))
-    write_png(ICONS / "source.png", size, size, draw(size, layers))
+    return lambda p, q: sd_rounded_rect(p, q, x + w / 2, y + h / 2, w / 2, h / 2, r)
+
+
+def capsule(a, b, radius):
+    return lambda p, q: sd_capsule(p, q, a[0], a[1], b[0], b[1], radius)
+
+
+def make_source(size: int = 1024) -> None:
+    """Two monitors on a violet gradient, a white arc jumping to the right one."""
+
+    S = size
+    hw = S * 0.07 / 2
+    white = (255, 255, 255)
+    start, stop = (90, 92, 255), (177, 76, 243)  # #5a5cff -> #b14cf3, top-left to bottom-right
+
+    def gradient(px, py):
+        t = max(0.0, min(1.0, (px + py) / (2 * S)))
+        return tuple(int(round(a + (b - a) * t)) for a, b in zip(start, stop))
+
+    layers = [(gradient, rr(0, 0, S, S, S * 0.225))]
+    for x in (S * 0.21, S * 0.59):
+        screen = rr(x, S * 0.50, S * 0.20, S * 0.15, S * 0.025)
+        layers.append((white, sd_outline(screen, hw), 0.55))
+        layers.append((white, capsule((x + S * 0.06, S * 0.72), (x + S * 0.14, S * 0.72), hw), 0.55))
+    # the target screen is lit; the outer half of its stroke stays translucent
+    layers.append((white, rr(S * 0.59, S * 0.50, S * 0.20, S * 0.15, S * 0.025)))
+    layers.append((white, quad_bezier_stroke((S * 0.31, S * 0.42), (S * 0.50, S * 0.10), (S * 0.69, S * 0.40), hw)))
+    layers.append((white, arrow_head((S * 0.70, S * 0.42), 0.40 * math.pi, S * 0.16)))
+    write_png(ICONS / "source.png", S, S, draw(S, layers))
 
 
 def make_tray_icons(size: int = 44) -> None:
-    """Black + alpha template images; macOS recolours them for the menu bar."""
+    """Black + alpha template images; macOS recolours them for the menu bar.
+
+    Geometry is in 44 px units (22 pt @2x): one monitor, an arc above it while
+    switching, an exclamation mark cut out of it when attention is needed.
+    """
 
     black = (0, 0, 0)
-    c = size / 2.0
 
-    idle = [(black, lambda p, q: sd_ring(p, q, c, c, size * 0.32, size * 0.055))]
-    switching = [(black, lambda p, q: sd_circle(p, q, c, c, size * 0.36))]
-    attention = [
-        (black, lambda p, q: sd_ring(p, q, c, c, size * 0.25, size * 0.055)),
-        (black, lambda p, q: sd_circle(p, q, size * 0.82, size * 0.18, size * 0.12)),
+    def solid_monitor():
+        return [
+            (black, rr(10, 12, 24, 16, 2.5)),
+            (black, capsule((17.2, 33.6), (26.8, 33.6), 1.75)),
+        ]
+
+    idle = solid_monitor()
+    switching = [
+        (black, sd_outline(rr(10, 19, 24, 13, 2.5), 1.5)),
+        (black, capsule((17.2, 36.8), (26.8, 36.8), 1.5)),
+        (black, quad_bezier_stroke((9, 12), (22, 0), (35, 12), 1.6)),
+        (black, arrow_head((35, 12), 0.42 * math.pi, 9, front=0.6, half_width=0.5)),
+    ]
+    attention = solid_monitor() + [
+        ("erase", rr(20.5, 15, 3, 6.5, 1.5)),
+        ("erase", lambda p, q: sd_circle(p, q, 22, 24.5, 1.7)),
     ]
     for name, layers in (
         ("tray-idle", idle),
