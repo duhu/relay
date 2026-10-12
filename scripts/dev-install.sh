@@ -12,7 +12,8 @@ APP=/Applications/Relay-dev.app
 
 pkill -x relay 2>/dev/null || true
 rm -rf "$APP"
-cp -R "$BUILT" "$APP"
+# Move, not copy: a second bundle left under target/ shows up in Spotlight as a twin of the installed app.
+mv "$BUILT" "$APP"
 # Relay bundles no helper binaries since M2, so `Resources/bin` is a layout
 # that no longer exists; the directory test keeps the guard harmless either way.
 if [ -d "$APP/Contents/Resources/bin" ]; then
@@ -33,3 +34,4 @@ mkdir -p ~/.local/bin
 ln -sf "$APP/Contents/MacOS/relay" ~/.local/bin/relay
 
 open -a "$APP"
+"$APP/Contents/MacOS/relay" --version
