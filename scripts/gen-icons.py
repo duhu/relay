@@ -256,26 +256,29 @@ def make_source(size: int = 1024) -> None:
 def make_tray_icons(size: int = 44) -> None:
     """Black + alpha template images; macOS recolours them for the menu bar.
 
-    Geometry is in 44 px units (22 pt @2x): one monitor, an arc above it while
-    switching, an exclamation mark cut out of it when attention is needed.
+    Geometry is in 44 px units (22 pt @2x). The default is an outlined monitor
+    with the leap arc above it — the arc is what makes it Relay's rather than
+    any monitor glyph. While switching the monitor fills in (the picture is
+    on the move); when attention is needed the arc goes and an exclamation
+    mark is cut out of a solid monitor.
     """
 
     black = (0, 0, 0)
 
-    def solid_monitor():
+    def leap(filled: bool):
+        monitor = rr(10, 19, 24, 13, 2.5)
         return [
-            (black, rr(10, 12, 24, 16, 2.5)),
-            (black, capsule((17.2, 33.6), (26.8, 33.6), 1.75)),
+            (black, monitor if filled else sd_outline(monitor, 1.5)),
+            (black, capsule((17.2, 36.8), (26.8, 36.8), 1.5)),
+            (black, quad_bezier_stroke((9, 12), (22, 0), (35, 12), 1.6)),
+            (black, arrow_head((35, 12), 0.42 * math.pi, 9, front=0.6, half_width=0.5)),
         ]
 
-    idle = solid_monitor()
-    switching = [
-        (black, sd_outline(rr(10, 19, 24, 13, 2.5), 1.5)),
-        (black, capsule((17.2, 36.8), (26.8, 36.8), 1.5)),
-        (black, quad_bezier_stroke((9, 12), (22, 0), (35, 12), 1.6)),
-        (black, arrow_head((35, 12), 0.42 * math.pi, 9, front=0.6, half_width=0.5)),
-    ]
-    attention = solid_monitor() + [
+    idle = leap(filled=False)
+    switching = leap(filled=True)
+    attention = [
+        (black, rr(10, 12, 24, 16, 2.5)),
+        (black, capsule((17.2, 33.6), (26.8, 33.6), 1.75)),
         ("erase", rr(20.5, 15, 3, 6.5, 1.5)),
         ("erase", lambda p, q: sd_circle(p, q, 22, 24.5, 1.7)),
     ]
