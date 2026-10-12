@@ -199,6 +199,10 @@ const zhHans: Record<string, string> = {
   "transfer.rerun": "重新运行向导",
   "transfer.confirmDiscard": "这里有还没保存的改动，向导会顶掉这个表单，改动会丢。要继续吗？",
 
+  // The build stamp at the foot of the Advanced tab, so two Macs can be told
+  // apart in a bug report. `{label}` is "0.1.0 · caaf9b0 · 2026-10-10".
+  "about.version": "Relay 版本 {label}",
+
   // The wizard: the first screen a Mac that has never been configured shows,
   // and the fast path for a second one. Same words as the settings window —
   // 机器 / 通道 / 触发 / 跟随 / 输入源 — so the two cannot teach different ones.
@@ -478,6 +482,9 @@ const en: Record<string, string> = {
   "transfer.rerun": "Run the wizard again",
   "transfer.confirmDiscard":
     "There are unsaved changes here. The wizard takes this form's place, and they will be lost. Go on?",
+
+  // The build stamp at the foot of the Advanced tab.
+  "about.version": "Relay {label}",
 
   "wizard.title": "Set up Relay",
   "wizard.stepOf": "Step {step} of {total}",

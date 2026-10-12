@@ -12,6 +12,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watchEffect } from "vu
 import { setLanguage, t } from "../lib/i18n";
 import * as ipc from "../lib/ipc";
 import type {
+  BuildInfo,
   Config,
   DeviceConfig,
   DeviceRole,
@@ -99,6 +100,8 @@ const blank = ref(false);
  */
 const baseline = ref("");
 const status = ref<Status | null>(null);
+/** Which build this is, for the foot of the Advanced tab; null until it answers. */
+const build = ref<BuildInfo | null>(null);
 const granted = ref(false);
 const tab = ref<TabId>("overview");
 /** The top banner: a load failure or the backend's validation message. */
@@ -189,6 +192,14 @@ watchEffect(() => {
 
 onMounted(() => {
   void load();
+  // The build never changes while the window lives, so once is enough; without
+  // it the line is simply absent.
+  ipc
+    .getBuildInfo()
+    .then((b) => {
+      build.value = b;
+    })
+    .catch(() => {});
   // The close button hides this window instead of destroying it, so the view
   // outlives being put away and `windows.rs` sends "shown" when it comes back.
   // The listener is registered on this window, which is what the targeted emit
@@ -1767,6 +1778,11 @@ async function switchTo(host: Host) {
             </span>
           </div>
         </section>
+
+        <!-- Same format as `BuildInfo::label` in Rust; keep the " · " separator. -->
+        <p v-if="build" class="about">
+          {{ t("about.version", { label: `${build.version} · ${build.commit} · ${build.date}` }) }}
+        </p>
       </template>
     </main>
 
@@ -1987,6 +2003,16 @@ tr.meta .transport {
 .found-row code,
 .found-row span:not(.found-name) {
   color: var(--muted);
+}
+
+/* Selectable so it can be copied into a bug report. */
+.about {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  -webkit-user-select: text; /* WKWebView */
+  user-select: text;
 }
 
 footer {

@@ -288,6 +288,19 @@ export function accessibilityGranted(): Promise<boolean> {
   return invoke<boolean>("accessibility_granted");
 }
 
+/** Which build the app is: the package version plus what `build.rs` stamped. */
+export interface BuildInfo {
+  version: string;
+  /** Short git hash, with `+` when the tree was dirty; or "unknown". */
+  commit: string;
+  /** `YYYY-MM-DD`, or "unknown". */
+  date: string;
+}
+
+export function getBuildInfo(): Promise<BuildInfo> {
+  return invoke<BuildInfo>("get_build_info");
+}
+
 /**
  * Adds Relay to the Accessibility list with the system prompt and, when it is
  * not granted yet, opens that pane of System Settings. Resolves to whether it
