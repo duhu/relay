@@ -44,7 +44,7 @@ relay/
   Cargo.toml          workspace 根：members = ["src-tauri", "crates/relay-core"]（Cargo 要求成员在根目录下）
   AGENTS.md  package.json  vite.config.ts  tsconfig.json  index.html
   docs/               overview.md · specs/relay-core.md
-  scripts/            dev-install.sh（build --debug → /Applications/Relay-dev.app → 签名 → symlink relay）· gen-icons.py
+  scripts/            dev-install.sh（build --debug → /Applications/Relay-dev.app → 签名 → symlink relay）· install-remote.sh（把本机已装的 Relay-dev.app 打包 scp 到另一台 Mac 换上；远端看见键鼠就拒绝）· gen-icons.py
 
   src/                Vue 前端（无组件库）
     App.vue           按 location.hash 路由 settings / log / wizard；机器没配好时直接进向导

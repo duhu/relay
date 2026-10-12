@@ -25,6 +25,7 @@ This project drives real hardware that can be left in a bad state. These are not
 ```bash
 cargo test --workspace && cargo clippy --workspace --all-targets && pnpm build   # must be warning-free
 ./scripts/dev-install.sh          # build --debug, install /Applications/Relay-dev.app, sign, symlink ~/.local/bin/relay
+./scripts/install-remote.sh user@other-mac   # ship this Mac's installed Relay-dev.app to another Mac over ssh; refuses while that Mac sees the keyboard
 relay --status                    # daemon/core status (state, config_ok, input_monitoring)
 relay --version                   # which build this binary is; relay --status shows the running app's
 relay --devices                   # Logitech HID devices this Mac sees (vid:pid name) — no daemon needed
