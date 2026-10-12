@@ -1,5 +1,6 @@
 //! The resident app: single instance, core runtime, IPC server and tray.
 
+pub mod build_info;
 mod commands;
 pub mod paths;
 mod tray;
@@ -66,6 +67,7 @@ pub fn run() {
             commands::read_config_file,
             commands::import_config,
             commands::export_config,
+            commands::get_build_info,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -184,7 +186,14 @@ fn handler(app: AppHandle, core: CoreHandle) -> ipc::Handler {
 async fn answer(app: AppHandle, core: CoreHandle, request: Request) -> Response {
     match request {
         Request::Status => match serde_json::to_value(core.status().await) {
-            Ok(status) => Response::ok(status),
+            // The CLI prints the resident app's build, which can differ from
+            // its own binary's after a reinstall that did not restart the app.
+            Ok(mut status) => {
+                if let serde_json::Value::Object(map) = &mut status {
+                    map.insert("version".into(), build_info::CURRENT.label().into());
+                }
+                Response::ok(status)
+            }
             Err(err) => Response::error(err),
         },
         Request::Switch {

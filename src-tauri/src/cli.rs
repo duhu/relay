@@ -1,9 +1,10 @@
 //! argv dispatch for the short-lived `relay` CLI (spec §7).
 //!
-//! Every command but `--devices` and `--displays` goes to the resident app
-//! over the unix socket, starting it first if it is not there. Those two only
-//! enumerate hardware, which any process may do, so they answer on their own
-//! and work whether or not the app is running. stdout carries results only;
+//! Every command but `--devices`, `--displays` and `--version` goes to the
+//! resident app over the unix socket, starting it first if it is not there.
+//! The first two only enumerate hardware, which any process may do, and
+//! `--version` describes this binary, so they answer on their own and work
+//! whether or not the app is running. stdout carries results only;
 //! anything diagnostic goes to stderr (invariant 8).
 
 use std::io;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::app::{self, paths};
+use crate::app::{self, build_info, paths};
 use crate::ipc::{self, Request, Response};
 
 const EXIT_OK: i32 = 0;
@@ -46,6 +47,7 @@ Usage:
   relay --settings            open the settings window
   relay --devices             list the HID devices this Mac can see
   relay --displays            list the external displays this Mac can drive
+  relay --version             print which build this is (relay status prints the running app's)
   relay --help                print this help
 
 <host> is the 0-based HID++ slot as declared in config.json.
@@ -60,6 +62,8 @@ enum Command {
     Devices,
     Displays,
     Status,
+    /// This binary's build, answered without the resident app.
+    Version,
     Settings,
     Switch {
         target: Target,
@@ -95,6 +99,7 @@ fn parse(args: &[String]) -> Result<Command, String> {
     match first.as_str() {
         "switch" => parse_switch(&args[1..]),
         "status" | "--status" => only(&args[1..], Command::Status),
+        "version" | "--version" | "-V" => only(&args[1..], Command::Version),
         "--settings" => only(&args[1..], Command::Settings),
         "--devices" => only(&args[1..], Command::Devices),
         "--displays" => only(&args[1..], Command::Displays),
@@ -161,6 +166,10 @@ fn run(command: Command) -> i32 {
             }
             Err(code) => code,
         },
+        Command::Version => {
+            println!("relay {}", build_info::CURRENT.label());
+            EXIT_OK
+        }
         Command::Settings => match request(&Request::OpenSettings, false) {
             Ok(_) => EXIT_OK,
             Err(code) => code,
@@ -387,6 +396,7 @@ fn print_displays() -> i32 {
 }
 
 fn print_status(status: &StatusView) {
+    println!("version: {}", status.version.as_deref().unwrap_or("-"));
     println!("state: {}", status.state);
     println!("config_ok: {}", status.config_ok);
     if let Some(error) = &status.config_error {
@@ -462,6 +472,9 @@ struct StatusView {
     /// Absent from a resident app older than P9; read as not granted.
     #[serde(default)]
     accessibility: bool,
+    /// The resident app's build label; absent from one older than P11.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -512,6 +525,14 @@ mod tests {
     fn status_has_a_flag_form_and_a_subcommand_form() {
         assert_eq!(parsed(&["status"]), Command::Status);
         assert_eq!(parsed(&["--status"]), Command::Status);
+    }
+
+    #[test]
+    fn version_has_a_flag_form_and_a_subcommand_form() {
+        assert_eq!(parsed(&["version"]), Command::Version);
+        assert_eq!(parsed(&["--version"]), Command::Version);
+        assert_eq!(parsed(&["-V"]), Command::Version);
+        assert!(parse(&argv(&["--version", "extra"])).is_err());
     }
 
     #[test]
@@ -640,6 +661,9 @@ mod tests {
         assert_eq!(view.hosts, status.hosts);
         assert!(view.input_monitoring);
         assert!(view.accessibility);
+        // The core does not know the build; the resident app adds it on the
+        // way out, and a status without it reads as an older app.
+        assert_eq!(view.version, None);
     }
 
     #[test]

@@ -126,6 +126,7 @@ relay status                状态、配置、权限、上次结果
 relay --settings            打开设置窗口
 relay --devices             本机能看到的罗技 HID 设备
 relay --displays            本机能驱动的外接显示器
+relay --version             这个二进制是哪次构建（relay status 显示的是常驻实例的）
 ```
 
 退出码：`0` 成功，`1` 失败，`2` 用法错误，`3` 常驻实例不在。

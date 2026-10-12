@@ -26,6 +26,7 @@ This project drives real hardware that can be left in a bad state. These are not
 cargo test --workspace && cargo clippy --workspace --all-targets && pnpm build   # must be warning-free
 ./scripts/dev-install.sh          # build --debug, install /Applications/Relay-dev.app, sign, symlink ~/.local/bin/relay
 relay --status                    # daemon/core status (state, config_ok, input_monitoring)
+relay --version                   # which build this binary is; relay --status shows the running app's
 relay --devices                   # Logitech HID devices this Mac sees (vid:pid name) — no daemon needed
 relay --displays                  # external displays with a DDC channel (edid_uuid name) — no daemon, no permission
 relay switch 1 --dry-run          # prints the plan without touching hardware

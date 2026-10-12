@@ -56,10 +56,11 @@ relay/
     Cargo.toml        relay-app，[[bin]] name = "relay"
     tauri.conf.json   bundle id work.bam.relay（不再内嵌任何外部二进制）；tauri.dev.conf.json 覆盖为 Relay-dev / work.bam.relay.dev
     Info.plist        LSUIElement
+    build.rs          把 git 提交号和构建日期打进二进制：RELAY_COMMIT / RELAY_BUILD_DATE
     src/main.rs       cli::dispatch()
-    src/cli.rs        argv 解析、switch/status/--settings/--devices/--displays、IPC client、自启常驻实例
+    src/cli.rs        argv 解析、switch/status/--settings/--devices/--displays/--version、IPC client、自启常驻实例
     src/ipc.rs        unix socket server + NDJSON Request/Response
-    src/app/          mod.rs（setup、单实例锁、autostart、TCC 提示、没配好就开窗进向导）· tray.rs · commands.rs（含 scan_devices / list_displays）· windows.rs · paths.rs
+    src/app/          mod.rs（setup、单实例锁、autostart、TCC 提示、没配好就开窗进向导）· tray.rs · commands.rs（含 scan_devices / list_displays）· windows.rs · paths.rs · build_info.rs
 
   crates/relay-core/  纯 Rust，无 Tauri 依赖
     types.rs          HostIndex · DeviceId · DeviceRole · TriggerEvent

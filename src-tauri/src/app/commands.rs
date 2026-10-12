@@ -24,6 +24,7 @@ use relay_core::types::HostIndex;
 use serde::Serialize;
 use tauri::State;
 
+use super::build_info::{self, BuildInfo};
 use super::paths;
 
 /// The System Settings pane that holds the Input Monitoring list.
@@ -70,6 +71,12 @@ pub struct ConfigLoadError {
     pub message: String,
     /// There is no config file at all: this Mac has never been configured.
     pub not_found: bool,
+}
+
+/// Which build this app is; the settings window shows it on the Advanced tab.
+#[tauri::command]
+pub fn get_build_info() -> BuildInfo {
+    build_info::CURRENT.clone()
 }
 
 /// The config as it is on disk, or why it could not be read.

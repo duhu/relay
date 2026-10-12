@@ -147,6 +147,7 @@ relay status                state, config, permission, last result
 relay --settings            open the settings window
 relay --devices             Logitech HID devices this Mac can see
 relay --displays            external displays this Mac can drive
+relay --version             which build this binary is (relay status shows the running app's)
 ```
 
 Exit codes: `0` ok, `1` failed, `2` usage, `3` the app is not running.
