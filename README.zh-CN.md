@@ -1,3 +1,5 @@
+<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Relay 图标"></p>
+
 # Relay
 
 **多台 Mac 共用一台显示器和一套罗技键鼠时的软 KVM。**
@@ -11,6 +13,8 @@
 就连着的硬件。
 
 Relay 常驻菜单栏，不打开设置就不显示任何窗口。
+
+<p align="center"><img src="docs/assets/settings-zh.png" width="620" alt="Relay 设置 · 概览页：画面、键盘、鼠标各在哪台，以及每台的手动切换"></p>
 
 ---
 

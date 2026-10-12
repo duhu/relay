@@ -1,3 +1,5 @@
+<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Relay icon"></p>
+
 # Relay
 
 **Software KVM for Macs sharing one monitor and one Logitech keyboard + mouse.**
@@ -13,6 +15,8 @@ No extra box on the desk, no cable to unplug, no software on a server. Each Mac 
 its own copy of Relay and talks to the hardware it already owns.
 
 Relay lives in the menu bar. It opens no window until you ask for Settings.
+
+<p align="center"><img src="docs/assets/settings-en.png" width="620" alt="Relay Settings — the Overview tab: where the screen, keyboard and mouse are, and a manual switch per Mac"></p>
 
 ---
 
