@@ -43,5 +43,10 @@ fn main() {
     // the paths are relative to src-tauri/, the crate root.
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
+    // Unstaged edits move neither file, and the date is whatever day the
+    // script last ran, so an installed build could carry a clean, stale label.
+    // `dev-install.sh` exports a fresh RELAY_STAMP to force a re-stamp per
+    // install, and nowhere else: `cargo test` stays incremental.
+    println!("cargo:rerun-if-env-changed=RELAY_STAMP");
     tauri_build::build();
 }

@@ -4,7 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json
+# RELAY_STAMP makes build.rs re-read the git commit and the date for this
+# install; without it cargo reuses the last stamp until HEAD or the index moves.
+RELAY_STAMP=$(date +%s) pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json
 
 # Cargo puts the bundle under the workspace target dir, i.e. the repo root.
 BUILT=target/debug/bundle/macos/Relay-dev.app
