@@ -67,8 +67,6 @@ def sd_circle(px, py, cx, cy, radius):
     return math.hypot(px - cx, py - cy) - radius
 
 
-def sd_ring(px, py, cx, cy, radius, half_width):
-    return abs(sd_circle(px, py, cx, cy, radius)) - half_width
 
 
 def sd_capsule(px, py, ax, ay, bx, by, radius):
@@ -216,21 +214,6 @@ def draw(size: int, layers, tile: int = 16) -> bytearray:
     return buf
 
 
-def arrow(x0, y0, x1, y1, thickness, head):
-    """Capsules forming a straight arrow from (x0, y0) to (x1, y1)."""
-
-    angle = math.atan2(y1 - y0, x1 - x0)
-    r = thickness / 2.0
-    wings = []
-    for sign in (-1, 1):
-        a = angle + sign * math.radians(140)
-        wings.append((x1 + head * math.cos(a), y1 + head * math.sin(a)))
-    parts = [(x0, y0, x1, y1)]
-    parts += [(x1, y1, wx, wy) for wx, wy in wings]
-    return [
-        (lambda p, q, seg=seg: sd_capsule(p, q, seg[0], seg[1], seg[2], seg[3], r))
-        for seg in parts
-    ]
 
 
 # --- icons ------------------------------------------------------------------
