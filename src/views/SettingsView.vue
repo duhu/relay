@@ -1779,9 +1779,9 @@ async function switchTo(host: Host) {
           </div>
         </section>
 
-        <!-- Same format as `BuildInfo::label` in Rust; keep the " · " separator. -->
+        <!-- The label comes ready-made from Rust: what `relay --version` prints. -->
         <p v-if="build" class="about">
-          {{ t("about.version", { label: `${build.version} · ${build.commit} · ${build.date}` }) }}
+          {{ t("about.version", { label: build.label }) }}
         </p>
       </template>
     </main>

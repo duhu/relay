@@ -295,6 +295,8 @@ export interface BuildInfo {
   commit: string;
   /** `YYYY-MM-DD`, or "unknown". */
   date: string;
+  /** `version · commit · date`, formatted by Rust; what `relay --version` prints. */
+  label: string;
 }
 
 export function getBuildInfo(): Promise<BuildInfo> {

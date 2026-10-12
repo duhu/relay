@@ -2,10 +2,11 @@
 //! window, in `relay --status` (the resident app's) and `relay --version`
 //! (this binary's), so two Macs can be compared at a glance.
 
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 /// The package version plus the git commit and date `build.rs` stamped in.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct BuildInfo {
     pub version: &'static str,
     /// Short hash, `+` appended when the tree was dirty; or `unknown`.
@@ -22,10 +23,22 @@ pub const CURRENT: BuildInfo = BuildInfo {
 };
 
 impl BuildInfo {
-    /// `0.1.0 · caaf9b0 · 2026-10-10`. The settings window formats the same
-    /// string from the fields; keep the two in step.
+    /// `0.1.0 · caaf9b0 · 2026-10-10`.
     pub fn label(&self) -> String {
         format!("{} · {} · {}", self.version, self.commit, self.date)
+    }
+}
+
+/// The wire form carries the ready-made `label` too, so the settings window
+/// shows exactly what `relay --version` prints instead of formatting its own.
+impl Serialize for BuildInfo {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("BuildInfo", 4)?;
+        state.serialize_field("version", self.version)?;
+        state.serialize_field("commit", self.commit)?;
+        state.serialize_field("date", self.date)?;
+        state.serialize_field("label", &self.label())?;
+        state.end()
     }
 }
 
@@ -41,6 +54,18 @@ mod tests {
             date: "2026-10-10",
         };
         assert_eq!(info.label(), "0.1.0 · caaf9b0+ · 2026-10-10");
+    }
+
+    #[test]
+    fn the_wire_form_carries_the_label() {
+        let info = BuildInfo {
+            version: "0.1.0",
+            commit: "caaf9b0",
+            date: "2026-10-10",
+        };
+        let json = serde_json::to_value(&info).expect("serializes");
+        assert_eq!(json["label"], "0.1.0 · caaf9b0 · 2026-10-10");
+        assert_eq!(json["commit"], "caaf9b0");
     }
 
     #[test]
